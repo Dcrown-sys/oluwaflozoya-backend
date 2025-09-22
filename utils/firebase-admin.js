@@ -4,6 +4,7 @@ const admin = require("firebase-admin");
 const projectId = process.env.FIREBASE_PROJECT_ID;
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
 let privateKey = process.env.FIREBASE_PRIVATE_KEY;
+const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
 
 // Safety checks
 if (!projectId || !clientEmail || !privateKey) {
@@ -24,9 +25,9 @@ try {
         clientEmail,
         privateKey,
       }),
-      // optional: storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+      storageBucket, // ✅ Add this
     });
-    console.log("✅ Firebase Admin initialized");
+    console.log("✅ Firebase Admin initialized with storage bucket:", storageBucket);
   } else {
     console.log("ℹ️ Firebase Admin already initialized");
   }

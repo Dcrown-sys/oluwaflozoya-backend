@@ -18,8 +18,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY; 
 
 // ✅ Firebase Admin SDK Setup
-const admin = require('firebase-admin');
-const serviceAccount = require('../config/serviceAccountKey.json');
+const admin = require("../config/firebase");
 
 if (!admin.apps.length) {
   admin.initializeApp({
