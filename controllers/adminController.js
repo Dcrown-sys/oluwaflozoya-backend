@@ -50,34 +50,49 @@ exports.signupAdmin = async (req, res) => {
   }
 };
 
-// ✅ Login
+// controllers/adminController.js
+
 exports.loginAdmin = async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    // Fetch the admin user from database
     const admin = await sql`
       SELECT * FROM users WHERE email = ${email} AND role = 'admin'
     `;
 
-    if (admin.length === 0) {
+    if (!admin || admin.length === 0) {
       return res.status(404).json({ error: 'Admin not found' });
     }
 
+    // Check password
     const valid = await bcrypt.compare(password, admin[0].password);
     if (!valid) return res.status(401).json({ error: 'Invalid password' });
 
+    // Generate JWT token
     const token = jwt.sign(
       { id: admin[0].id, email: admin[0].email, role: 'admin' },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
 
-    res.status(200).json({ message: 'Login successful', token });
+    // Send structured response including user object
+    res.status(200).json({
+      success: true,
+      user: {
+        id: admin[0].id,
+        full_name: admin[0].name, // match frontend expectation
+        email: admin[0].email,
+        role: admin[0].role,
+      },
+      token,
+    });
   } catch (err) {
-    console.error(err);
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Something went wrong' });
   }
 };
+
 
 exports.getAdminAnalyticsOverview = async (req, res) => {
     try {
@@ -627,43 +642,97 @@ exports.createOrder = async (req, res) => {
 // Get single order by ID
 // =============================
 exports.getOrderById = async (req, res) => {
+  const { id } = req.params;
+
+  if (!id) {
+    return res.status(400).json({ success: false, message: "Order ID is required" });
+  }
+
   try {
-    console.log("📩 Incoming request to /orders/:orderId");
-    console.log("🧠 Params:", req.params);
+    console.log("🔹 Fetching order with ID:", id);
 
-    const { orderId } = req.params;
-
-    // ✅ Get order and include order_items if available
+    // Fetch order with items
     const [order] = await sql`
       SELECT 
-        o.*, 
-        json_agg(
-          json_build_object(
-            'id', oi.id,
-            'product_id', oi.product_id,
-            'name', oi.product_name,
-            'quantity', oi.quantity,
-            'price', oi.price,
-            'image', oi.product_image
-          )
+        o.id,
+        o.user_id,
+        o.status,
+        o.delivery_address,
+        o.phone_number,
+        o.delivery_notes,
+        o.total_amount AS total_price,
+        o.delivery_fee,
+        o.fee,
+        o.bonus,
+        o.courier_id,
+        o.courier_name,
+        o.courier_phone,
+        o.courier_location,
+        o.dropoff_latitude AS dropoff_lat,
+        o.dropoff_longitude AS dropoff_lng,
+        o.rating_status,
+        o.courier_rating,
+        o.points_awarded,
+        o.referral_code_used,
+        o.created_at,
+        o.updated_at,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', oi.id,
+              'product_id', oi.product_id,
+              'name', oi.name,
+              'price', oi.price,
+              'quantity', oi.quantity,
+              'image', oi.image_url
+            )
+          ) FILTER (WHERE oi.id IS NOT NULL),
+          '[]'
         ) AS items
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
-      WHERE o.id = ${orderId}
+      WHERE o.id = ${id}
       GROUP BY o.id
-      LIMIT 1
     `;
 
     if (!order) {
-      console.log("❌ No order found for ID:", orderId);
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    console.log("✅ Found order:", order.id);
-    res.status(200).json({ success: true, data: order });
-  } catch (error) {
-    console.error("🔥 Error fetching order:", error);
-    res.status(500).json({ success: false, message: "Error fetching order details" });
+    console.log("🔹 Order fetched:", order);
+
+    return res.json({ success: true, data: order });
+  } catch (err) {
+    console.error("❌ Error fetching order details:", err);
+    return res.status(500).json({ success: false, message: "Error fetching order details" });
+  }
+};
+
+// buyer order
+exports.getOrderByIdForUser = async (req, res) => {
+  const { orderId } = req.params;
+  const { userId } = req.query; // user UUID from frontend or Postman
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: "Missing userId query parameter" });
+  }
+
+  try {
+    const result = await sql`
+      SELECT *
+      FROM orders
+      WHERE id = ${orderId} AND user_id = ${userId}
+      LIMIT 1
+    `;
+
+    if (!result || result.length === 0) {
+      return res.status(404).json({ success: false, message: "Order not found or doesn't belong to this user" });
+    }
+
+    res.json({ success: true, data: result[0] });
+  } catch (err) {
+    console.error("Error fetching order details:", err);
+    res.status(500).json({ success: false, message: "Error fetching order details", error: err.message });
   }
 };
 

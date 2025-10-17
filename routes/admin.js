@@ -1,3 +1,4 @@
+// routes/admin.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -18,6 +19,15 @@ const {
   changePassword,
   changePhoneNumber,
 } = require('../controllers/adminController');
+
+
+
+const { firebaseLogin } = require('../controllers/authController');
+
+// ============================
+// Firebase login
+// ============================
+router.post('/firebase-login', firebaseLogin);
 
 // ============================
 // Admin Auth
@@ -41,7 +51,7 @@ router.get('/analytics/sales-graph', verifyAdmin, adminController.getSalesGraph)
 router.get('/products', adminController.getAllProducts);
 router.get('/products/search', adminController.searchProducts);
 router.get('/products/category/:categoryId', adminController.getProductsByCategory);
-router.get('/products/featured', adminController.getFeaturedProducts); // buyer-accessible
+router.get('/products/featured', adminController.getFeaturedProducts);
 router.get('/trending-products', adminController.getTrendingProducts);
 router.get('/best-sellers', adminController.getBestSellers);
 router.get('/trending', adminController.getTrending);
@@ -50,7 +60,6 @@ router.post('/add-product', verifyToken, upload.single('image'), adminController
 router.put('/products/:id', adminController.updateProduct);
 router.delete('/products/:id', adminController.deleteProduct);
 
-// Featured products management
 router.post('/products/featured', verifyAdmin, adminController.setFeaturedProducts);
 router.delete('/products/featured', verifyAdmin, adminController.removeFeaturedProducts);
 
@@ -61,7 +70,9 @@ router.get('/producers', verifyAdmin, adminController.getAllProducers);
 router.post('/producers', verifyAdmin, adminController.addProducer);
 router.get('/producer/:producerId/products', adminController.getProductsByProducer);
 
+// ============================
 // Payments
+// ============================
 router.post('/initiatePayment', adminController.initiatePayment);
 router.get('/verifyPayment', adminController.verifyPayment);
 router.post('/webhook/flutterwave', adminController.flutterwaveWebhook);
@@ -86,16 +97,24 @@ router.get('/payment-success', (req, res) => {
 // Orders
 // ============================
 router.post('/orders', adminController.createOrder);
-router.get('/orders/user/:user_id', adminController.getOrdersByUser); // get all orders by user
-router.get('/orders/:orderId', verifyToken, adminController.getOrderById); // get single order by ID
+router.get('/orders/user/:user_id', adminController.getOrdersByUser);
+router.get('/orders/:id', adminController.getOrderById);
+// routes/admin.js
+router.get('/buyer/orders/:orderId', adminController.getOrderByIdForUser);
+
 router.get('/orders', adminController.getAllOrdersAdmin);
 router.patch('/orders/:id/status', adminController.updateOrderStatus);
+router.get('/ping', (req, res) => res.send('✅ Admin API is alive!'));
 
+// ============================
 // Promo
+// ============================
 router.post('/promo/validate', adminController.validatePromoCode);
 router.post('/promo/redeem', adminController.redeemPromoCode);
 
+// ============================
 // Categories
+// ============================
 router.get('/categories', adminController.getCategories);
 router.get('/buyer/category/:categoryId/producers', adminController.getProducersByCategory);
 
@@ -106,7 +125,9 @@ router.get('/notifications', adminController.getNotifications);
 router.post('/notifications', adminController.createNotification);
 router.patch('/notifications/:id/read', adminController.markNotificationAsRead);
 
+// ============================
 // Account updates
+// ============================
 router.patch('/user/account', updateAccountInfo);
 router.patch('/user/password', changePassword);
 router.patch('/change-phone', changePhoneNumber);
@@ -120,7 +141,6 @@ router.get('/couriers/available', verifyAdmin, adminController.availableCouriers
 router.get('/couriers/nearest/:orderId', verifyAdmin, adminController.nearestCourier);
 router.get('/tracking/nearest-couriers', verifyAdmin, adminController.getNearestCouriers);
 
-// Courier actions
 router.get('/courier/:courierId/dashboard', verifyCourier, adminController.getCourierDashboard);
 router.post('/delivery/:delivery_id/pickup', verifyCourier, adminController.courierPickupOrder);
 router.post('/delivery/:delivery_id/deliver', verifyCourier, adminController.courierDeliverOrder);
@@ -130,17 +150,14 @@ router.get('/courier/:courierId/stats', verifyCourier, adminController.getCourie
 router.get('/courier/:courierId/ratings/summary', verifyCourier, adminController.getCourierRatingsSummary);
 router.get('/courier/:courierId/referral-link', verifyCourier, adminController.getCourierReferralLink);
 
-// Courier tickets
 router.get('/courier/:courierId/tickets', verifyCourier, adminController.getCourierTickets);
 router.post('/courier/:courierId/tickets', verifyCourier, adminController.createCourierTicket);
 
-// Delivery tracking & assignments
 router.post('/assign-delivery', verifyAdmin, adminController.assignDelivery);
 router.post('/assign-courier/:orderId', adminController.assignCourierToOrder);
 router.get('/delivery-tracking/:delivery_id', adminController.getDeliveryTracking);
 router.get('/courier/deliveries/history', verifyCourier, adminController.getCourierDeliveryHistory);
 
-// Rate courier
 router.post('/courier/order/:id/rate', verifyCourier, adminController.courierRateOrder);
 router.post('/ratings/courier', verifyToken, adminController.rateCourier);
 

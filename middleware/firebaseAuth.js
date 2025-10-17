@@ -1,7 +1,7 @@
 // middleware/firebaseAuth.js
-const admin = require('../config/serviceAccountKey');// make sure you have this set up
+const admin = require('../config/serviceAccountKey'); // your firebase admin setup
 
-const authMiddleware = async (req, res, next) => {
+const verifyFirebaseToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
 
   if (!token) {
@@ -10,7 +10,7 @@ const authMiddleware = async (req, res, next) => {
 
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    req.user = { uid: decoded.uid };
+    req.user = decoded; // include uid, email, etc.
     next();
   } catch (err) {
     console.error('Auth error:', err.message);
@@ -18,4 +18,4 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-module.exports = { authMiddleware };
+module.exports = { verifyFirebaseToken };

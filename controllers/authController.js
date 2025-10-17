@@ -1,103 +1,73 @@
-// controllers/auth/firebaseLogin.js
+// controllers/authController.js
+const { sql } = require('../db');
 const jwt = require('jsonwebtoken');
-const { sql } = require('../../db'); // ✅ import correctly
+const admin = require("../config/firebase"); // Firebase Admin SDK
 const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
-const firebaseLogin = async (req, res) => {
+exports.firebaseLogin = async (req, res) => {
+  const firebaseToken = req.headers.authorization?.split(' ')[1];
+  const profileData = req.body || {};
+
+  console.log('🔹 Incoming firebase-login request');
+  console.log('🔹 Profile data:', profileData);
+
+  if (!firebaseToken) {
+    console.warn('⚠️ No Firebase token provided');
+    return res.status(401).json({ success: false, error: 'No Firebase token provided' });
+  }
+
   try {
-    const decodedToken = req.user;
-    console.log("🔑 Decoded Firebase token:", decodedToken);
+    // 1️⃣ Verify Firebase token
+    const decoded = await admin.auth().verifyIdToken(firebaseToken);
+    console.log('✅ Firebase token decoded:', decoded);
 
-    const firebase_uid = decodedToken.uid;
-    const email = decodedToken.email;
-
-    console.log("📌 Checking for existing user with firebase_uid:", firebase_uid);
-
-    // ✅ Check if user already exists
-    const [user] = await sql`
-      SELECT * FROM users WHERE firebase_uid = ${firebase_uid}
-    `;
-
-    let finalUser = user;
-
-    if (!user) {
-      const {
-        fullName,
-        phone,
-        role,
-        address,
-        deliveryAddress,
-        latitude,
-        longitude
-      } = req.body;
-
-      console.log("🆕 Creating new user with data:", {
-        firebase_uid,
-        email,
-        fullName,
-        phone,
-        role,
-        address,
-        deliveryAddress,
-        latitude,
-        longitude
-      });
-
-      // ✅ Create user
-      const [newUser] = await sql`
-        INSERT INTO users (
-          firebase_uid, email, full_name, phone, role, address, delivery_address, latitude, longitude
-        ) VALUES (
-          ${firebase_uid}, ${email}, ${fullName}, ${phone}, ${role},
-          ${address}, ${deliveryAddress}, ${latitude}, ${longitude}
-        )
-        RETURNING *
-      `;
-
-      console.log("✅ New user created:", newUser);
-      finalUser = newUser;
+    const email = decoded.email;
+    if (!email) {
+      console.warn('⚠️ Firebase token has no email');
+      return res.status(400).json({ success: false, error: 'Firebase token missing email' });
     }
 
-    // ✅ Ensure courier record exists
-    if (finalUser.role === 'courier') {
-      const [courier] = await sql`
-        SELECT * FROM couriers WHERE user_id = ${finalUser.id}
-      `;
-      if (courier) {
-        console.log("✅ Courier already exists:", courier);
-      } else {
-        const [newCourier] = await sql`
-          INSERT INTO couriers (user_id, status, created_at)
-          VALUES (${finalUser.id}, 'available', NOW())
-          RETURNING *
-        `;
-        console.log("✅ New courier record created:", newCourier);
-      }
+    // 2️⃣ Look up user in DB
+    const result = await sql`SELECT * FROM users WHERE email = ${email} LIMIT 1`;
+    console.log('🔹 DB query result:', result);
+
+    if (!result || result.length === 0) {
+      console.warn(`⚠️ User not found in DB for email: ${email}`);
+      return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    // ✅ Generate backend JWT
+    const user = result[0];
+
+    // 3️⃣ Generate backend JWT
     const token = jwt.sign(
-      {
-        id: finalUser.id,
-        firebase_uid: finalUser.firebase_uid,
-        role: finalUser.role
-      },
+      { id: user.id, email: user.email, role: user.role },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
+    console.log('✅ JWT generated for user:', user.id);
 
-    console.log("🎟️ JWT issued for user:", finalUser.id);
+    // 4️⃣ Return response exactly frontend expects
+    const responseUser = {
+      id: user.id,
+      full_name: user.name || user.full_name || 'User',
+      email: user.email,
+      role: user.role,
+      ...profileData // merge extra profileData safely
+    };
+
+    console.log('🔹 Sending response user object:', responseUser);
 
     return res.json({
       success: true,
-      message: user ? 'User already exists (synced)' : 'User created',
-      user: finalUser,
-      token,
+      user: responseUser,
+      token
     });
+
   } catch (err) {
-    console.error('🔥 Firebase login error:', err);
-    return res.status(500).json({ success: false, error: 'Something went wrong' });
+    console.error('❌ Firebase login error:', err);
+
+    // Provide more informative error to help frontend debug
+    const message = err.code ? `${err.code}: ${err.message}` : err.message;
+    return res.status(401).json({ success: false, error: `Invalid Firebase token - ${message}` });
   }
 };
-
-module.exports = firebaseLogin;
