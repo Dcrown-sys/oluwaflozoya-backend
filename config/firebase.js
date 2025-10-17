@@ -3,14 +3,14 @@ const admin = require("firebase-admin");
 let serviceAccount;
 
 if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-  // On Render (JSON comes from env)
+  
   try {
     serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
   } catch (err) {
     console.error("❌ Invalid FIREBASE_SERVICE_ACCOUNT JSON:", err);
   }
 } else {
-  // Local dev (falls back to JSON file)
+  
   try {
     serviceAccount = require("./serviceAccountKey.json");
   } catch (err) {

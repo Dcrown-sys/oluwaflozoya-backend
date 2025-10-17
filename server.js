@@ -6,35 +6,60 @@ const http = require('http');
 const { Server } = require('socket.io');
 const { sql } = require('./db');
 const adminController = require('./controllers/adminController');
-const geocodeRoutes = require("./routes/geocode");
+const geocodeRoutes = require('./routes/geocode');
 
 const app = express();
 const server = http.createServer(app);
+
 const io = new Server(server, {
   cors: {
-    origin: '*', // Update for production security
-    methods: ['GET', 'POST'],
+    origin: '*', // ⚠️ Allow all for now — restrict in production
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
   },
 });
 
-// ========== MIDDLEWARE ==========
+// ========================
+// 🧩 MIDDLEWARE
+// ========================
 
-// Raw body for Flutterwave webhook ONLY (kept scoped)
-app.use('/api/admin/flutterwave-webhook', express.raw({ type: 'application/json' }));
+// Global request logger (place this early)
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
 
-// Standard middleware
+// Handle raw body for Flutterwave webhook ONLY
+app.use(
+  '/api/admin/flutterwave-webhook',
+  express.raw({ type: 'application/json' })
+);
+
+// Normal JSON parser and CORS
 app.use(cors());
 app.use(express.json());
-app.use("/api/geocode", geocodeRoutes);
 
-// ========== SOCKET.IO REAL-TIME ==========
+// ========================
+// 🧭 ROUTES
+// ========================
+const authRoutes = require('./routes/auth');
+const adminRoutes = require('./routes/admin');
+adminController.initSocketIO(io);
+
+// Standardized route prefixes
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/geocode', geocodeRoutes);
+
+// Webhook routes
+app.use('/api/webhook', require('./routes/webhook'));
+
+// ========================
+// ⚡ SOCKET.IO EVENTS
+// ========================
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
 
-  /**
-   * Courier Location Updates
-   * data: { courier_id, latitude, longitude }
-   */
+  // --- Courier Location Update ---
   socket.on('locationUpdate', async (data) => {
     try {
       const { courier_id, latitude, longitude } = data;
@@ -42,25 +67,20 @@ io.on('connection', (socket) => {
 
       console.log(`📍 Courier ${courier_id} location:`, latitude, longitude);
 
-      // Save to courier_location table
       await sql`
         INSERT INTO courier_location (courier_id, latitude, longitude, updated_at)
         VALUES (${courier_id}, ${latitude}, ${longitude}, NOW())
-        ON CONFLICT (courier_id) 
+        ON CONFLICT (courier_id)
         DO UPDATE SET latitude = ${latitude}, longitude = ${longitude}, updated_at = NOW()
       `;
 
-      // Broadcast updated location to all clients
       io.emit('courierLocation', data);
     } catch (err) {
       console.error('❌ Error saving location:', err);
     }
   });
 
-  /**
-   * Send Notification
-   * data: { user_id, message, type }
-   */
+  // --- Notifications ---
   socket.on('sendNotification', async (data) => {
     try {
       const { user_id, message, type } = data;
@@ -68,20 +88,18 @@ io.on('connection', (socket) => {
 
       console.log(`🔔 Notification to user ${user_id}: ${message}`);
 
-      // Save to notifications table
       await sql`
         INSERT INTO notifications (user_id, message, type, created_at, is_read)
         VALUES (${user_id}, ${message}, ${type || 'info'}, NOW(), false)
       `;
 
-      // Emit notification to specific user room
       io.to(`user_${user_id}`).emit('notification', { message, type });
     } catch (err) {
       console.error('❌ Error saving notification:', err);
     }
   });
 
-  // Join room for direct notifications
+  // --- Room Join ---
   socket.on('joinUserRoom', (user_id) => {
     socket.join(`user_${user_id}`);
     console.log(`📌 User ${user_id} joined their room`);
@@ -92,18 +110,9 @@ io.on('connection', (socket) => {
   });
 });
 
-// ========== ROUTES ==========
-const authRoutes = require('./routes/auth');
-const adminRoutes = require('./routes/admin');
-adminController.initSocketIO(io);
-
-app.use('/auth', authRoutes);
-app.use('/admin', adminRoutes);
-app.use('/api/admin', adminRoutes);
-
-
-
-// ---------- Flutterwave webhook with improved logic ----------
+// ========================
+// 💳 FLUTTERWAVE WEBHOOK
+// ========================
 app.post('/api/admin/flutterwave-webhook', async (req, res) => {
   const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
   const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
@@ -114,19 +123,13 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
   }
 
   try {
-    // Raw body is buffer, parse JSON here
     const payload = JSON.parse(req.body.toString());
-
     console.log('✅ Flutterwave webhook received:', payload);
 
-    // Only handle charge.completed event to update payment status
     if (payload.event === 'charge.completed') {
-      const { tx_ref, status, amount, currency, customer } = payload.data;
-
-      // Normalize status to lowercase
+      const { tx_ref, status, amount, currency } = payload.data;
       const normalizedStatus = status.toLowerCase();
 
-      // Update payments table
       const result = await sql`
         UPDATE payments
         SET status = ${normalizedStatus}, amount = ${amount}, currency = ${currency}, updated_at = NOW()
@@ -138,8 +141,6 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
         console.warn(`⚠️ Payment with tx_ref ${tx_ref} not found`);
       } else {
         const user_id = result[0].user_id;
-
-        // Emit payment update notification to user via Socket.IO
         io.to(`user_${user_id}`).emit('paymentUpdate', {
           tx_ref,
           status: normalizedStatus,
@@ -164,19 +165,14 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
   }
 });
 
-// Webhook test route
-app.use('/api/webhook', require('./routes/webhook'));
-
-// Health check route
+// ========================
+// 🚀 HEALTH CHECK
+// ========================
 app.get('/', (req, res) => res.send('🚀 Oluwaflo backend is running!'));
 
-// Global request logger
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  next();
-});
-
-// ========== START SERVER ==========
+// ========================
+// 🏁 START SERVER
+// ========================
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', async () => {

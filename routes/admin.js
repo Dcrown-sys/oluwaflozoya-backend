@@ -10,7 +10,7 @@ const { getAds, createAd, deleteAd } = require("../controllers/adminController")
 const {
   verifyAdmin,
   verifyToken,
-  verifyCourier, // <- Make sure this is imported
+  verifyCourier,
 } = require('../middleware/auth');
 
 const {
@@ -26,7 +26,7 @@ router.post('/signup', adminController.signupAdmin);
 router.post('/login', adminController.loginAdmin);
 
 // ============================
-// Dashboard + Analytics
+// Dashboard & Analytics
 // ============================
 router.get('/dashboard', verifyAdmin, (req, res) => {
   res.status(200).json({ message: 'Welcome Admin', admin: req.admin });
@@ -39,9 +39,20 @@ router.get('/analytics/sales-graph', verifyAdmin, adminController.getSalesGraph)
 // Product Management
 // ============================
 router.get('/products', adminController.getAllProducts);
+router.get('/products/search', adminController.searchProducts);
+router.get('/products/category/:categoryId', adminController.getProductsByCategory);
+router.get('/products/featured', adminController.getFeaturedProducts); // buyer-accessible
+router.get('/trending-products', adminController.getTrendingProducts);
+router.get('/best-sellers', adminController.getBestSellers);
+router.get('/trending', adminController.getTrending);
+
 router.post('/add-product', verifyToken, upload.single('image'), adminController.addProduct);
 router.put('/products/:id', adminController.updateProduct);
 router.delete('/products/:id', adminController.deleteProduct);
+
+// Featured products management
+router.post('/products/featured', verifyAdmin, adminController.setFeaturedProducts);
+router.delete('/products/featured', verifyAdmin, adminController.removeFeaturedProducts);
 
 // ============================
 // Producer Management
@@ -49,24 +60,12 @@ router.delete('/products/:id', adminController.deleteProduct);
 router.get('/producers', verifyAdmin, adminController.getAllProducers);
 router.post('/producers', verifyAdmin, adminController.addProducer);
 router.get('/producer/:producerId/products', adminController.getProductsByProducer);
+
+// Payments
 router.post('/initiatePayment', adminController.initiatePayment);
 router.get('/verifyPayment', adminController.verifyPayment);
 router.post('/webhook/flutterwave', adminController.flutterwaveWebhook);
-
-// ============================
-// Orders
-// ============================
-router.post('/orders', adminController.createOrder);
-router.get('/orders/:user_id', adminController.getOrdersByUser);
-router.patch('/orders/:id/status', adminController.updateOrderStatus);
-router.get('/orders', adminController.getAllOrdersAdmin);
-router.post('/promo/validate', adminController.validatePromoCode);
-router.post('/promo/redeem', adminController.redeemPromoCode);
-router.get('/categories', adminController.getCategories);
-router.get('/products/category/:categoryId', adminController.getProductsByCategory);
-router.get('/buyer/category/:categoryId/producers', adminController.getProducersByCategory);
 router.post('/buyer/create-payment-link', adminController.createPaymentLink);
-
 router.get('/payment-success', (req, res) => {
   res.send(`
     <html>
@@ -84,11 +83,30 @@ router.get('/payment-success', (req, res) => {
 });
 
 // ============================
+// Orders
+// ============================
+router.post('/orders', adminController.createOrder);
+router.get('/orders/user/:user_id', adminController.getOrdersByUser); // get all orders by user
+router.get('/orders/:orderId', verifyToken, adminController.getOrderById); // get single order by ID
+router.get('/orders', adminController.getAllOrdersAdmin);
+router.patch('/orders/:id/status', adminController.updateOrderStatus);
+
+// Promo
+router.post('/promo/validate', adminController.validatePromoCode);
+router.post('/promo/redeem', adminController.redeemPromoCode);
+
+// Categories
+router.get('/categories', adminController.getCategories);
+router.get('/buyer/category/:categoryId/producers', adminController.getProducersByCategory);
+
+// ============================
 // Notifications
 // ============================
 router.get('/notifications', adminController.getNotifications);
 router.post('/notifications', adminController.createNotification);
 router.patch('/notifications/:id/read', adminController.markNotificationAsRead);
+
+// Account updates
 router.patch('/user/account', updateAccountInfo);
 router.patch('/user/password', changePassword);
 router.patch('/change-phone', changePhoneNumber);
@@ -98,76 +116,39 @@ router.patch('/change-phone', changePhoneNumber);
 // ============================
 router.post('/courier/location', adminController.updateCourierLocation);
 router.get('/tracking/couriers', verifyAdmin, adminController.getCourierTrackingStatus);
-router.post('/user/fcm-token', verifyToken, adminController.saveFcmToken);
 router.get('/couriers/available', verifyAdmin, adminController.availableCouriers);
 router.get('/couriers/nearest/:orderId', verifyAdmin, adminController.nearestCourier);
 router.get('/tracking/nearest-couriers', verifyAdmin, adminController.getNearestCouriers);
 
-// ============================
-// Courier Assignments & Actions
-// ============================
-
-// Assign courier (legacy)
-router.post("/assign-courier/:orderId", adminController.assignCourierToOrder);
-
-// Assign delivery (new)
-router.post('/assign-delivery', verifyAdmin, adminController.assignDelivery);
-router.get('/delivery-tracking/:delivery_id', adminController.getDeliveryTracking);
-
-// Courier dashboard
+// Courier actions
 router.get('/courier/:courierId/dashboard', verifyCourier, adminController.getCourierDashboard);
-
-// Pickup order
 router.post('/delivery/:delivery_id/pickup', verifyCourier, adminController.courierPickupOrder);
-router.patch(
-  "/courier/deliveries/:deliveryId/status",
-  adminController.updateDeliveryStatus
-);
-
-// Featured products routes
-router.get("/products/featured", adminController.getFeaturedProducts); // no auth if buyer
-router.post("/products/featured", verifyAdmin, adminController.setFeaturedProducts);
-router.delete("/products/featured", verifyAdmin, adminController.removeFeaturedProducts);
-
-// 🔥 Trending / Best Sellers
-router.get("/best-sellers", adminController.getBestSellers);
-router.get("/trending", adminController.getTrending);
-
-// ✅ Trending Products route
-router.get("/trending-products", adminController.getTrendingProducts);
-
-// 🔍 Product search
-router.get("/products/search", adminController.searchProducts);
-
-
-
-// Deliver order
 router.post('/delivery/:delivery_id/deliver', verifyCourier, adminController.courierDeliverOrder);
-
-// Rate order
-router.post('/courier/order/:id/rate', verifyCourier, adminController.courierRateOrder);
-
-// Update availability
+router.patch('/courier/deliveries/:deliveryId/status', adminController.updateDeliveryStatus);
 router.post('/courier/:courierId/availability', verifyCourier, adminController.updateCourierAvailability);
-
-// Stats & Ratings
 router.get('/courier/:courierId/stats', verifyCourier, adminController.getCourierStats);
 router.get('/courier/:courierId/ratings/summary', verifyCourier, adminController.getCourierRatingsSummary);
 router.get('/courier/:courierId/referral-link', verifyCourier, adminController.getCourierReferralLink);
 
-// Delivery history
-router.get('/courier/deliveries/history', verifyCourier, adminController.getCourierDeliveryHistory);
-
-
-// Tickets
+// Courier tickets
 router.get('/courier/:courierId/tickets', verifyCourier, adminController.getCourierTickets);
 router.post('/courier/:courierId/tickets', verifyCourier, adminController.createCourierTicket);
 
+// Delivery tracking & assignments
+router.post('/assign-delivery', verifyAdmin, adminController.assignDelivery);
+router.post('/assign-courier/:orderId', adminController.assignCourierToOrder);
+router.get('/delivery-tracking/:delivery_id', adminController.getDeliveryTracking);
+router.get('/courier/deliveries/history', verifyCourier, adminController.getCourierDeliveryHistory);
 
-// Ads routes
-router.get("/ads", getAds);
-router.post("/ads", createAd);
-router.delete("/ads/:id", deleteAd);
+// Rate courier
+router.post('/courier/order/:id/rate', verifyCourier, adminController.courierRateOrder);
+router.post('/ratings/courier', verifyToken, adminController.rateCourier);
 
+// ============================
+// Ads
+// ============================
+router.get('/ads', getAds);
+router.post('/ads', createAd);
+router.delete('/ads/:id', deleteAd);
 
 module.exports = router;

@@ -623,6 +623,49 @@ exports.createOrder = async (req, res) => {
     }
   };
   
+// =============================
+// Get single order by ID
+// =============================
+exports.getOrderById = async (req, res) => {
+  try {
+    console.log("📩 Incoming request to /orders/:orderId");
+    console.log("🧠 Params:", req.params);
+
+    const { orderId } = req.params;
+
+    // ✅ Get order and include order_items if available
+    const [order] = await sql`
+      SELECT 
+        o.*, 
+        json_agg(
+          json_build_object(
+            'id', oi.id,
+            'product_id', oi.product_id,
+            'name', oi.product_name,
+            'quantity', oi.quantity,
+            'price', oi.price,
+            'image', oi.product_image
+          )
+        ) AS items
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.id = ${orderId}
+      GROUP BY o.id
+      LIMIT 1
+    `;
+
+    if (!order) {
+      console.log("❌ No order found for ID:", orderId);
+      return res.status(404).json({ success: false, message: "Order not found" });
+    }
+
+    console.log("✅ Found order:", order.id);
+    res.status(200).json({ success: true, data: order });
+  } catch (error) {
+    console.error("🔥 Error fetching order:", error);
+    res.status(500).json({ success: false, message: "Error fetching order details" });
+  }
+};
 
   
 // adminController.assignCourier
@@ -1522,6 +1565,66 @@ exports.updateAccountInfo = async (req, res) => {
       res.status(500).json({ error: 'Failed to update account info' });
     }
   };
+
+// controllers/ratingController.js
+exports.rateCourier = async (req, res) => {
+  try {
+    const { courierId, orderId, rating, feedback, skipped } = req.body;
+    const userId = req.user.id; // from verifyToken
+
+    if (!courierId || !orderId)
+      return res.status(400).json({ message: "Missing courierId or orderId" });
+
+    // Ensure user owns this order
+    const order = await db.Order.findOne({ where: { id: orderId, userId } });
+    if (!order) return res.status(403).json({ message: "Unauthorized action" });
+
+    // Prevent double rating
+    const existingRating = await db.Rating.findOne({ where: { orderId } });
+    if (existingRating)
+      return res.status(400).json({ message: "Order already rated or skipped" });
+
+    // Record rating or skip
+    const newRating = await db.Rating.create({
+      courierId,
+      userId,
+      orderId,
+      rating: skipped ? null : rating,
+      feedback,
+      skipped,
+    });
+
+    // Update courier performance only if not skipped
+    if (!skipped && rating) {
+      const courier = await db.Courier.findByPk(courierId);
+      if (courier) {
+        courier.totalRatings += 1;
+        courier.ratingSum += rating;
+        courier.averageRating = courier.ratingSum / courier.totalRatings;
+        courier.weeklyPoints += rating * 10; // ⭐ 10 pts per star
+        await courier.save();
+      }
+    }
+
+    // Mark order as rated or skipped
+    await db.Order.update(
+      { ratingStatus: skipped ? "skipped" : "rated" },
+      { where: { id: orderId } }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: skipped
+        ? "You skipped rating this courier."
+        : "Courier rated successfully!",
+      data: newRating,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
   
 
 //   change password
