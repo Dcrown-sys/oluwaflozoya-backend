@@ -25,9 +25,22 @@ exports.getAllCouriers = async (req, res) => {
       ORDER BY c.created_at DESC
     `;
 
+    // 👇 Add full URLs for image paths
+    const BASE_URL = process.env.BASE_URL || "https://oluwaflozoya-backend.onrender.com";
+
+    const formattedCouriers = result.map((courier) => ({
+      ...courier,
+      selfie_url: courier.selfie_url
+        ? `${BASE_URL}${courier.selfie_url}`
+        : null,
+      document_url: courier.document_url
+        ? `${BASE_URL}${courier.document_url}`
+        : null,
+    }));
+
     res.json({
       success: true,
-      couriers: result,
+      couriers: formattedCouriers,
     });
   } catch (err) {
     console.error('❌ Error fetching couriers:', err);

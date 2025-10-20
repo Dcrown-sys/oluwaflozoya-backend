@@ -105,6 +105,8 @@ adminController.initSocketIO(io);
 app.use('/api/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/uploads', express.static('uploads'));
+
 
 
 
