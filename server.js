@@ -9,9 +9,13 @@ const adminController = require('./controllers/adminController');
 const geocodeRoutes = require("./routes/geocode");
 const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
-const adminKYCRoutes = require('./routes/adminKYCApproval');
+const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
+
+
 
 const app = express();
+const path = require('path');
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -19,6 +23,10 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
   },
 });
+
+
+// Pass the Socket.IO instance to the controller
+adminKYCApprovalController.setSocket(io);
 
 // ========== MIDDLEWARE ==========
 
@@ -31,7 +39,7 @@ app.use(express.json());
 app.use("/api/geocode", geocodeRoutes);
 app.use('/api/courier', courierKYCRoutes);
 app.use('/api/admin', adminKYCApprovalRoutes);
-app.use('/api/admin', adminKYCRoutes);
+
 // ========== SOCKET.IO REAL-TIME ==========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
@@ -105,7 +113,7 @@ adminController.initSocketIO(io);
 app.use('/api/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/uploads', express.static('uploads'));
+
 
 
 

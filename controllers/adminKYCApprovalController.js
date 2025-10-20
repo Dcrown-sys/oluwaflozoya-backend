@@ -1,5 +1,11 @@
-// controllers/adminKYCApprovalController.js
 const { sql } = require('../db');
+
+let io = null; // Socket.IO instance
+
+// ✅ Initialize Socket.IO instance
+exports.setSocket = (socketInstance) => {
+  io = socketInstance;
+};
 
 // ✅ Fetch all couriers (join users + couriers)
 exports.getAllCouriers = async (req, res) => {
@@ -48,7 +54,7 @@ exports.getAllCouriers = async (req, res) => {
   }
 };
 
-// ✅ Approve or reject courier KYC
+// ✅ Approve or reject courier KYC with notification
 exports.updateCourierStatus = async (req, res) => {
   try {
     const { id } = req.params; // courier_id
@@ -58,21 +64,43 @@ exports.updateCourierStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid status value' });
     }
 
+    // Update courier KYC status
     const result = await sql`
       UPDATE couriers
       SET verification_status = ${status}, updated_at = NOW()
       WHERE id = ${id}
-      RETURNING id, verification_status
+      RETURNING id, user_id, verification_status
     `;
 
     if (result.length === 0) {
       return res.status(404).json({ success: false, message: 'Courier not found' });
     }
 
+    const updatedCourier = result[0];
+
+    // 🔔 Send notification via Socket.IO if io is set
+    if (io && updatedCourier.user_id) {
+      const message =
+        status === 'approved'
+          ? 'Your KYC has been approved! You can now start delivering.'
+          : 'Your KYC has been rejected. Please check your documents and try again.';
+
+      io.to(`user_${updatedCourier.user_id}`).emit('notification', {
+        message,
+        type: status === 'approved' ? 'success' : 'warning',
+      });
+
+      // Optionally, save to notifications table
+      await sql`
+        INSERT INTO notifications (user_id, message, type, created_at, is_read)
+        VALUES (${updatedCourier.user_id}, ${message}, ${status === 'approved' ? 'success' : 'warning'}, NOW(), false)
+      `;
+    }
+
     res.json({
       success: true,
       message: `Courier ${status} successfully`,
-      courier: result[0],
+      courier: updatedCourier,
     });
   } catch (err) {
     console.error('❌ Error updating courier status:', err);
