@@ -1,6 +1,11 @@
 const { sql } = require('../db');
-const path = require('path');
-const fs = require('fs');
+const admin = require('firebase-admin');
+
+// Make sure Firebase is initialized elsewhere, e.g.:
+// admin.initializeApp({
+//   credential: admin.credential.cert(require('../firebase-service-account.json')),
+//   storageBucket: 'your-firebase-bucket-url.appspot.com',
+// });
 
 exports.submitKYC = async (req, res) => {
   const userId = req.user.id;
@@ -14,18 +19,19 @@ exports.submitKYC = async (req, res) => {
   }
 
   try {
-    // Save files locally (optional) or push to cloud
-    const selfieName = `${Date.now()}-${selfieFile.originalname}`;
-    const documentName = `${Date.now()}-${documentFile.originalname}`;
-    const uploadsDir = path.join(__dirname, '../uploads');
+    const bucket = admin.storage().bucket();
 
-    if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
+    // Upload selfie
+    const selfieName = `kyc/selfie-${Date.now()}-${selfieFile.originalname}`;
+    const selfieRef = bucket.file(selfieName);
+    await selfieRef.save(selfieFile.buffer, { metadata: { contentType: selfieFile.mimetype } });
+    const [selfieUrl] = await selfieRef.getSignedUrl({ action: 'read', expires: '03-09-2491' });
 
-    fs.writeFileSync(path.join(uploadsDir, selfieName), selfieFile.buffer);
-    fs.writeFileSync(path.join(uploadsDir, documentName), documentFile.buffer);
-
-    const selfie_url = `/uploads/${selfieName}`;
-    const document_url = `/uploads/${documentName}`;
+    // Upload document
+    const documentName = `kyc/document-${Date.now()}-${documentFile.originalname}`;
+    const documentRef = bucket.file(documentName);
+    await documentRef.save(documentFile.buffer, { metadata: { contentType: documentFile.mimetype } });
+    const [documentUrl] = await documentRef.getSignedUrl({ action: 'read', expires: '03-09-2491' });
 
     const existingCourier = await sql`SELECT id FROM couriers WHERE user_id = ${userId}`;
 
@@ -37,8 +43,8 @@ exports.submitKYC = async (req, res) => {
             address = ${address},
             vehicle_type = ${vehicle_type},
             vehicle_plate = ${vehicle_plate},
-            selfie_url = ${selfie_url},
-            document_url = ${document_url},
+            selfie_url = ${selfieUrl},
+            document_url = ${documentUrl},
             verification_status = 'pending'
         WHERE user_id = ${userId}
       `;
@@ -47,7 +53,7 @@ exports.submitKYC = async (req, res) => {
         INSERT INTO couriers
           (user_id, full_name, phone, address, vehicle_type, vehicle_plate, selfie_url, document_url, verification_status)
         VALUES
-          (${userId}, ${full_name}, ${phone}, ${address}, ${vehicle_type}, ${vehicle_plate}, ${selfie_url}, ${document_url}, 'pending')
+          (${userId}, ${full_name}, ${phone}, ${address}, ${vehicle_type}, ${vehicle_plate}, ${selfieUrl}, ${documentUrl}, 'pending')
       `;
     }
 

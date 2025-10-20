@@ -31,17 +31,11 @@ exports.getAllCouriers = async (req, res) => {
       ORDER BY c.created_at DESC
     `;
 
-    // 👇 Add full URLs for image paths
-    const BASE_URL = process.env.BASE_URL || "https://oluwaflozoya-backend.onrender.com";
-
+    // 👇 Add Firebase URLs or keep existing URLs
     const formattedCouriers = result.map((courier) => ({
       ...courier,
-      selfie_url: courier.selfie_url
-        ? `${BASE_URL}${courier.selfie_url}`
-        : null,
-      document_url: courier.document_url
-        ? `${BASE_URL}${courier.document_url}`
-        : null,
+      selfie_url: courier.selfie_url || null,
+      document_url: courier.document_url || null,
     }));
 
     res.json({
@@ -66,36 +60,47 @@ exports.updateCourierStatus = async (req, res) => {
 
     // Update courier KYC status
     const result = await sql`
-    UPDATE couriers
-    SET verification_status = ${status}, updated_at = NOW()
-    WHERE id = ${id}::uuid
-    RETURNING id, user_id, verification_status
-  `;
-  
+      UPDATE couriers
+      SET verification_status = ${status}, verified_at = NOW()
+      WHERE id = ${id}
+      RETURNING id, user_id, verification_status
+    `;
 
     if (result.length === 0) {
       return res.status(404).json({ success: false, message: 'Courier not found' });
     }
 
     const updatedCourier = result[0];
+    const user_id = updatedCourier.user_id;
 
-    // 🔔 Send notification via Socket.IO if io is set
-    if (io && updatedCourier.user_id) {
-      const message =
-        status === 'approved'
-          ? 'Your KYC has been approved! You can now start delivering.'
-          : 'Your KYC has been rejected. Please check your documents and try again.';
+    // 🔔 Prepare notification
+    const message =
+      status === 'approved'
+        ? 'Your KYC has been approved! You can now start delivering.'
+        : 'Your KYC has been rejected. Please check your documents and try again.';
 
-      io.to(`user_${updatedCourier.user_id}`).emit('notification', {
+    const title = status === 'approved' ? 'KYC Approved' : 'KYC Rejected';
+    const type = status === 'approved' ? 'success' : 'warning';
+
+    // ✅ Save notification in DB
+    await sql`
+      INSERT INTO notifications (user_id, title, body, data, read, created_at)
+      VALUES (
+        ${user_id},
+        ${title},
+        ${message},
+        ${JSON.stringify({ type })},
+        false,
+        NOW()
+      )
+    `;
+
+    // ✅ Emit notification via Socket.IO
+    if (io) {
+      io.to(`user_${user_id}`).emit('notification', {
         message,
-        type: status === 'approved' ? 'success' : 'warning',
+        type,
       });
-
-      // Optionally, save to notifications table
-      await sql`
-        INSERT INTO notifications (user_id, message, type, created_at, is_read)
-        VALUES (${updatedCourier.user_id}, ${message}, ${status === 'approved' ? 'success' : 'warning'}, NOW(), false)
-      `;
     }
 
     res.json({
