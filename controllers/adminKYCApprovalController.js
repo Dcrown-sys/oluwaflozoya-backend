@@ -66,11 +66,12 @@ exports.updateCourierStatus = async (req, res) => {
 
     // Update courier KYC status
     const result = await sql`
-      UPDATE couriers
-      SET verification_status = ${status}, updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING id, user_id, verification_status
-    `;
+    UPDATE couriers
+    SET verification_status = ${status}, updated_at = NOW()
+    WHERE id = ${id}::uuid
+    RETURNING id, user_id, verification_status
+  `;
+  
 
     if (result.length === 0) {
       return res.status(404).json({ success: false, message: 'Courier not found' });
