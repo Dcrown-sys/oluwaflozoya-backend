@@ -47,3 +47,39 @@ exports.verifyBuyer = (req, res, next) => {
     next();
   });
 };
+
+
+// General authentication middleware for any logged-in user
+exports.authenticateUser = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'No token provided' });
+  }
+
+  const uid = authHeader.split(' ')[1]; // Firebase UID sent as "token"
+
+  try {
+    // Look up user in DB by Firebase UID
+    const result = await sql`
+      SELECT id, role, email FROM users WHERE firebase_uid = ${uid}
+    `;
+
+    if (result.length === 0) {
+      return res.status(401).json({ success: false, message: 'User not found' });
+    }
+
+    // Attach user info to req.user
+    req.user = {
+      id: result[0].id,
+      role: result[0].role,
+      email: result[0].email,
+      uid: uid,
+    };
+
+    next();
+  } catch (err) {
+    console.error('❌ Auth error:', err);
+    return res.status(500).json({ success: false, message: 'Server error during authentication' });
+  }
+};

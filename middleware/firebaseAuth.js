@@ -1,5 +1,5 @@
 // middleware/firebaseAuth.js
-const admin = require('../config/serviceAccountKey'); // your firebase admin setup
+const admin = require('../config/firebase'); // ✅ correct import
 
 const verifyFirebaseToken = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -10,10 +10,10 @@ const verifyFirebaseToken = async (req, res, next) => {
 
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    req.user = decoded; // include uid, email, etc.
+    req.user = decoded; // contains uid, email, etc.
     next();
   } catch (err) {
-    console.error('Auth error:', err.message);
+    console.error('❌ Firebase auth error:', err.message);
     res.status(401).json({ error: 'Invalid or expired token' });
   }
 };
