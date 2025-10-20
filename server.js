@@ -9,6 +9,7 @@ const adminController = require('./controllers/adminController');
 const geocodeRoutes = require("./routes/geocode");
 const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
+const adminKYCRoutes = require('./routes/adminKYCApproval');
 
 const app = express();
 const server = http.createServer(app);
@@ -30,6 +31,7 @@ app.use(express.json());
 app.use("/api/geocode", geocodeRoutes);
 app.use('/api/courier', courierKYCRoutes);
 app.use('/api/admin', adminKYCApprovalRoutes);
+app.use('/api/admin', adminKYCRoutes);
 // ========== SOCKET.IO REAL-TIME ==========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
