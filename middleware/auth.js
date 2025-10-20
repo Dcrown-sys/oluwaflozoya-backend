@@ -1,21 +1,22 @@
 const jwt = require('jsonwebtoken');
+const { sql } = require('../db');
 const JWT_SECRET = process.env.JWT_SECRET;
 
 // Generic JWT validator (attach decoded token to req.user)
 exports.verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token provided' });
+    return res.status(401).json({ success: false, message: 'No token provided' });
   }
 
   const token = authHeader.split(' ')[1];
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded; // Attach user info to request
+    req.user = decoded; // Attach decoded token payload to request
     next();
   } catch (err) {
-    res.status(401).json({ error: 'Invalid or expired token' });
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
 };
 
@@ -23,63 +24,28 @@ exports.verifyToken = (req, res, next) => {
 exports.verifyAdmin = (req, res, next) => {
   exports.verifyToken(req, res, () => {
     if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Access denied: Admins only' });
+      return res.status(403).json({ success: false, message: 'Access denied: Admins only' });
     }
     next();
   });
 };
 
-// Optional: You can also create for courier, buyer, etc
+// Role-based middleware for courier only
 exports.verifyCourier = (req, res, next) => {
   exports.verifyToken(req, res, () => {
     if (req.user.role !== 'courier') {
-      return res.status(403).json({ error: 'Access denied: Couriers only' });
+      return res.status(403).json({ success: false, message: 'Access denied: Couriers only' });
     }
     next();
   });
 };
 
+// Role-based middleware for buyer only
 exports.verifyBuyer = (req, res, next) => {
   exports.verifyToken(req, res, () => {
     if (req.user.role !== 'buyer') {
-      return res.status(403).json({ error: 'Access denied: Buyers only' });
+      return res.status(403).json({ success: false, message: 'Access denied: Buyers only' });
     }
     next();
   });
-};
-
-
-// General authentication middleware for any logged-in user
-exports.authenticateUser = async (req, res, next) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ success: false, message: 'No token provided' });
-  }
-
-  const uid = authHeader.split(' ')[1]; // Firebase UID sent as "token"
-
-  try {
-    // Look up user in DB by Firebase UID
-    const result = await sql`
-      SELECT id, role, email FROM users WHERE firebase_uid = ${uid}
-    `;
-
-    if (result.length === 0) {
-      return res.status(401).json({ success: false, message: 'User not found' });
-    }
-
-    // Attach user info to req.user
-    req.user = {
-      id: result[0].id,
-      role: result[0].role,
-      email: result[0].email,
-      uid: uid,
-    };
-
-    next();
-  } catch (err) {
-    console.error('❌ Auth error:', err);
-    return res.status(500).json({ success: false, message: 'Server error during authentication' });
-  }
 };

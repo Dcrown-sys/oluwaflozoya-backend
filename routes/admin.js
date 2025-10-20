@@ -4,7 +4,7 @@ const router = express.Router();
 const multer = require('multer');
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
-const { verifyFirebaseToken } = require('../middleware/firebaseAuth');
+
 
 
 const adminController = require('../controllers/adminController');
@@ -103,14 +103,7 @@ router.post('/assign-courier/:orderId', adminController.assignCourierToOrder);
 
 
 
-// Courier submits KYC (requires Firebase authentication)
-router.post('/courier/kyc', verifyFirebaseToken, upload.fields([
-  { name: 'selfie', maxCount: 1 },
-  { name: 'document', maxCount: 1 },
-]), adminController.submitCourierKYC);
 
-// Admin verifies or rejects KYC (also requires Firebase authentication)
-router.put('/courier/kyc/:courier_id/verify', verifyFirebaseToken, verifyAdmin, adminController.verifyCourierKYC);
 
 
 

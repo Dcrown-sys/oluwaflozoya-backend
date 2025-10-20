@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const { sql } = require('./db');
 const adminController = require('./controllers/adminController');
 const geocodeRoutes = require("./routes/geocode");
+const courierKYCRoutes = require('./routes/courierKYC');
 
 const app = express();
 const server = http.createServer(app);
@@ -26,7 +27,7 @@ app.use('/api/admin/flutterwave-webhook', express.raw({ type: 'application/json'
 app.use(cors());
 app.use(express.json());
 app.use("/api/geocode", geocodeRoutes);
-
+app.use('/api/courier', courierKYCRoutes);
 // ========== SOCKET.IO REAL-TIME ==========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
