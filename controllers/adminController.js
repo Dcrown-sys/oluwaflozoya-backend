@@ -1892,13 +1892,13 @@ exports.getCategories = async (req, res) => {
     try {
       const {
         user_id,
-        order_id,         // optional for delivery payments
-        items,            // only for order payments
+        order_id, // optional for delivery payments
+        items, // only for order payments
         email,
         name,
         phone,
         delivery_address, // only for order payments
-        payment_type = 'order' // 'order' or 'delivery'
+        payment_type = 'order', // 'order' or 'delivery'
       } = req.body;
   
       if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
@@ -1910,11 +1910,11 @@ exports.getCategories = async (req, res) => {
       }
   
       let totalAmount = 0;
+      let order;
   
       // -----------------------
-      // 1️⃣ If order payment, create order + items
+      // 🛒 1️⃣ Handle order payments
       // -----------------------
-      let order;
       if (payment_type === 'order') {
         if (!items || items.length === 0) {
           return res.status(400).json({ error: 'Items are required for order payment' });
@@ -1924,7 +1924,6 @@ exports.getCategories = async (req, res) => {
           return res.status(400).json({ error: 'Delivery address required' });
         }
   
-        // Create order + items in transaction
         order = await sql.begin(async (tx) => {
           const [newOrder] = await tx`
             INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email)
@@ -1932,12 +1931,14 @@ exports.getCategories = async (req, res) => {
             RETURNING id
           `;
   
+          // Calculate subtotal
+          let subtotal = 0;
           for (const item of items) {
             const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
             if (!product) throw new Error(`Product not found: ${item.product_id}`);
   
             const itemTotal = product.price * item.quantity;
-            totalAmount += itemTotal;
+            subtotal += itemTotal;
   
             await tx`
               INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
@@ -1945,12 +1946,22 @@ exports.getCategories = async (req, res) => {
             `;
           }
   
+          // Add 3% VAT + 3% Service Fee
+          const vat = subtotal * 0.03;
+          const serviceFee = subtotal * 0.03;
+          const total = subtotal + vat + serviceFee;
+          totalAmount = total;
+  
+          // Update total amount
+          await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.id}`;
+  
           return { id: newOrder.id };
         });
+  
+        // -----------------------
+        // 🚚 2️⃣ Handle delivery payments
+        // -----------------------
       } else if (payment_type === 'delivery') {
-        // -----------------------
-        // 2️⃣ If delivery payment, get order total from delivery_fee
-        // -----------------------
         if (!order_id) {
           return res.status(400).json({ error: 'order_id required for delivery payment' });
         }
@@ -1963,28 +1974,31 @@ exports.getCategories = async (req, res) => {
       }
   
       // -----------------------
-      // 3️⃣ Generate tx_ref
+      // 🔖 3️⃣ Generate tx_ref
       // -----------------------
       const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
   
       // -----------------------
-      // 4️⃣ Create Flutterwave Payment Link
+      // 💰 4️⃣ Create Flutterwave Payment Link
       // -----------------------
       const fwRes = await axios.post(
         'https://api.flutterwave.com/v3/payments',
         {
           tx_ref,
-          amount: totalAmount,
+          amount: totalAmount.toFixed(2),
           currency: 'NGN',
           redirect_url: `${process.env.FRONTEND_URL}/payment-success?order_id=${order.id}&payment_type=${payment_type}`,
           customer: {
             email: email || 'zoyaprocurementcompany@gmail.com',
             name: name || 'Valued Customer',
-            phonenumber: phone || '08063203385'
+            phonenumber: phone || '08063203385',
           },
           customizations: {
             title: payment_type === 'order' ? 'Zoya Order Payment' : 'Zoya Delivery Payment',
-            description: payment_type === 'order' ? `Payment for order ${order.id}` : `Delivery fee for order ${order.id}`,
+            description:
+              payment_type === 'order'
+                ? `Payment for order ${order.id} (VAT + Service Fee included)`
+                : `Delivery fee for order ${order.id}`,
           },
         },
         {
@@ -2000,21 +2014,24 @@ exports.getCategories = async (req, res) => {
       }
   
       // -----------------------
-      // 5️⃣ Save payment record
+      // 💾 5️⃣ Save payment record
       // -----------------------
       await sql`
         INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
         VALUES (${uuidv4()}, ${order.id}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, NOW())
       `;
   
+      // -----------------------
+      // ✅ 6️⃣ Return response
+      // -----------------------
       return res.status(200).json({
         success: true,
         order_id: order.id,
         payment_type,
         payment_url: fwRes.data.data.link,
-        tx_ref
+        tx_ref,
+        total_amount: totalAmount,
       });
-  
     } catch (err) {
       console.error('❌ createPaymentLink error:', err);
       return res.status(500).json({ error: 'Internal server error' });
