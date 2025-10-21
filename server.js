@@ -124,7 +124,8 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
       UPDATE payments
       SET status = ${paymentStatus}, amount = ${data.amount}, currency = ${data.currency}, updated_at = NOW()
       WHERE tx_ref = ${txRef}
-      RETURNING id, user_id, payment_reference, type
+      RETURNING id, user_id, payment_reference, payment_type
+
     `;
 
     if (!updatedPayments.length) {
@@ -132,7 +133,8 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
       return res.status(404).send('Payment not found');
     }
 
-    const { user_id: userId, payment_reference: paymentReference, type: paymentType } = updatedPayments[0];
+    const { user_id: userId, payment_reference: paymentReference, payment_type: paymentType } = updatedPayments[0];
+
 
     // Update corresponding order status
     let orderStatus = 'pending';
