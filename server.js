@@ -5,96 +5,84 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const { sql } = require('./db');
+const path = require('path');
+
+// Controllers & routes
 const adminController = require('./controllers/adminController');
+const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
 const geocodeRoutes = require("./routes/geocode");
 const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
-const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
-
-
+const authRoutes = require('./routes/auth');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
-const path = require('path');
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: '*', // Update for production security
-    methods: ['GET', 'POST'],
-  },
+  cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-
-// Pass the Socket.IO instance to the controller
+// Pass Socket.IO instance to controllers
 adminKYCApprovalController.setSocket(io);
+adminController.initSocketIO(io);
 
-// ========== MIDDLEWARE ==========
+// ======== MIDDLEWARE ========
 
-// Raw body for Flutterwave webhook ONLY (kept scoped)
+// Raw body ONLY for Flutterwave webhook
 app.use('/api/admin/flutterwave-webhook', express.raw({ type: 'application/json' }));
 
 // Standard middleware
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use("/api/geocode", geocodeRoutes);
 app.use('/api/courier', courierKYCRoutes);
 app.use('/api/admin', adminKYCApprovalRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/admin', adminRoutes);
+app.use('/api/admin', adminRoutes);
 
-// ========== SOCKET.IO REAL-TIME ==========
+// ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
 
-  /**
-   * Courier Location Updates
-   * data: { courier_id, latitude, longitude }
-   */
+  // Courier location updates
   socket.on('locationUpdate', async (data) => {
     try {
       const { courier_id, latitude, longitude } = data;
       if (!courier_id || !latitude || !longitude) return;
 
-      console.log(`📍 Courier ${courier_id} location:`, latitude, longitude);
-
-      // Save to courier_location table
       await sql`
         INSERT INTO courier_location (courier_id, latitude, longitude, updated_at)
         VALUES (${courier_id}, ${latitude}, ${longitude}, NOW())
-        ON CONFLICT (courier_id) 
+        ON CONFLICT (courier_id)
         DO UPDATE SET latitude = ${latitude}, longitude = ${longitude}, updated_at = NOW()
       `;
 
-      // Broadcast updated location to all clients
       io.emit('courierLocation', data);
     } catch (err) {
       console.error('❌ Error saving location:', err);
     }
   });
 
-  /**
-   * Send Notification
-   * data: { user_id, message, type }
-   */
+  // Send notifications
   socket.on('sendNotification', async (data) => {
     try {
       const { user_id, message, type } = data;
       if (!user_id || !message) return;
 
-      console.log(`🔔 Notification to user ${user_id}: ${message}`);
-
-      // Save to notifications table
       await sql`
         INSERT INTO notifications (user_id, message, type, created_at, is_read)
         VALUES (${user_id}, ${message}, ${type || 'info'}, NOW(), false)
       `;
 
-      // Emit notification to specific user room
       io.to(`user_${user_id}`).emit('notification', { message, type });
     } catch (err) {
       console.error('❌ Error saving notification:', err);
     }
   });
 
-  // Join room for direct notifications
+  // Join room
   socket.on('joinUserRoom', (user_id) => {
     socket.join(`user_${user_id}`);
     console.log(`📌 User ${user_id} joined their room`);
@@ -105,20 +93,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// ========== ROUTES ==========
-const authRoutes = require('./routes/auth');
-const adminRoutes = require('./routes/admin');
-adminController.initSocketIO(io);
-
-app.use('/api/auth', authRoutes);
-app.use('/admin', adminRoutes);
-app.use('/api/admin', adminRoutes);
-
-
-
-
-
-// ---------- Flutterwave webhook with improved logic ----------
+// ======== FLUTTERWAVE WEBHOOK ========
 app.post('/api/admin/flutterwave-webhook', async (req, res) => {
   const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
   const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
@@ -129,52 +104,79 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
   }
 
   try {
-    // Raw body is buffer, parse JSON here
     const payload = JSON.parse(req.body.toString());
-
     console.log('✅ Flutterwave webhook received:', payload);
 
-    // Only handle charge.completed event to update payment status
-    if (payload.event === 'charge.completed') {
-      const { tx_ref, status, amount, currency, customer } = payload.data;
+    const { event, data } = payload;
+    if (!event || !data || !data.tx_ref) return res.status(400).send('Invalid payload');
 
-      // Normalize status to lowercase
-      const normalizedStatus = status.toLowerCase();
+    const txRef = data.tx_ref;
+    const fwStatus = (data.status || '').toLowerCase();
 
-      // Update payments table
-      const result = await sql`
-        UPDATE payments
-        SET status = ${normalizedStatus}, amount = ${amount}, currency = ${currency}, updated_at = NOW()
-        WHERE tx_ref = ${tx_ref}
-        RETURNING user_id
+    // Map Flutterwave status to DB status
+    let paymentStatus = 'pending';
+    if (['successful', 'completed'].includes(fwStatus)) paymentStatus = 'completed';
+    else if (['failed', 'cancelled'].includes(fwStatus)) paymentStatus = 'cancelled';
+    else if (fwStatus === 'pending') paymentStatus = 'pending';
+
+    // Update payment
+    const updatedPayments = await sql`
+      UPDATE payments
+      SET status = ${paymentStatus}, amount = ${data.amount}, currency = ${data.currency}, updated_at = NOW()
+      WHERE tx_ref = ${txRef}
+      RETURNING id, user_id, payment_reference, type
+    `;
+
+    if (!updatedPayments.length) {
+      console.warn(`⚠️ Payment with tx_ref ${txRef} not found`);
+      return res.status(404).send('Payment not found');
+    }
+
+    const { user_id: userId, payment_reference: paymentReference, type: paymentType } = updatedPayments[0];
+
+    // Update corresponding order status
+    let orderStatus = 'pending';
+    if (paymentType === 'order') {
+      if (paymentStatus === 'completed') orderStatus = 'paid';
+      else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
+    } else if (paymentType === 'delivery') {
+      if (paymentStatus === 'completed') orderStatus = 'delivery_paid';
+      else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
+    }
+
+    if (paymentReference) {
+      await sql`
+        UPDATE orders
+        SET status = ${orderStatus}, updated_at = NOW()
+        WHERE payment_reference = ${paymentReference}
+      `;
+    }
+
+    // Send notification
+    if (userId && io) {
+      let message = '';
+      if (paymentType === 'order') {
+        if (paymentStatus === 'completed') message = `🎉 Your order payment (ref: ${txRef}) was successful!`;
+        else if (paymentStatus === 'cancelled') message = `⚠️ Your order payment (ref: ${txRef}) was cancelled.`;
+        else message = `ℹ️ Your order payment (ref: ${txRef}) is ${paymentStatus}.`;
+      } else if (paymentType === 'delivery') {
+        if (paymentStatus === 'completed') message = `🚚 Delivery fee (ref: ${txRef}) was paid successfully!`;
+        else if (paymentStatus === 'cancelled') message = `⚠️ Delivery payment (ref: ${txRef}) was cancelled.`;
+        else message = `ℹ️ Your delivery payment (ref: ${txRef}) is ${paymentStatus}.`;
+      }
+
+      await sql`
+        INSERT INTO notifications (user_id, title, body, read, created_at)
+        VALUES (${userId}, 'Payment Update', ${message}, false, NOW())
       `;
 
-      if (result.length === 0) {
-        console.warn(`⚠️ Payment with tx_ref ${tx_ref} not found`);
-      } else {
-        const user_id = result[0].user_id;
-
-        // Emit payment update notification to user via Socket.IO
-        io.to(`user_${user_id}`).emit('paymentUpdate', {
-          tx_ref,
-          status: normalizedStatus,
-          amount,
-          currency,
-          message:
-            normalizedStatus === 'successful'
-              ? 'Payment successful. Your order is confirmed.'
-              : normalizedStatus === 'cancelled'
-              ? 'Payment was cancelled.'
-              : `Payment status updated: ${normalizedStatus}`,
-        });
-
-        console.log(`✅ Payment updated & notification sent for tx_ref: ${tx_ref}`);
-      }
+      io.to(`user_${userId}`).emit('paymentUpdate', { tx_ref: txRef, status: paymentStatus, message });
+      console.log(`🔔 Payment notification sent for user ${userId}: ${message}`);
     }
 
     res.status(200).send('Webhook processed successfully');
-  } catch (error) {
-    console.error('❌ Flutterwave webhook processing error:', error);
+  } catch (err) {
+    console.error('❌ Flutterwave webhook processing error:', err);
     res.status(500).send('Server error processing webhook');
   }
 });
@@ -182,16 +184,16 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
 // Webhook test route
 app.use('/api/webhook', require('./routes/webhook'));
 
-// Health check route
+// Health check
 app.get('/', (req, res) => res.send('🚀 Oluwaflo backend is running!'));
 
-// Global request logger
+// Request logger
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
 
-// ========== START SERVER ==========
+// ======== START SERVER ========
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', async () => {
@@ -201,6 +203,5 @@ server.listen(PORT, '0.0.0.0', async () => {
   } catch (error) {
     console.error('❌ Database connection failed:', error);
   }
-
   console.log(`🚀 Server with Socket.IO listening on port ${PORT}`);
 });

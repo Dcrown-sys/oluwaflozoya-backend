@@ -1889,112 +1889,134 @@ exports.getCategories = async (req, res) => {
   // NEW: Create Payment Link
   // ============================
   exports.createPaymentLink = async (req, res) => {
-    const { user_id, items, email, name, phone, delivery_address } = req.body;
-  
-    console.log('📦 Incoming create payment link request:', req.body);
-  
-    // 0️⃣ Validate request
-    if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
-      return res.status(400).json({ error: 'Valid UUID user_id is required' });
-    }
-    if (!items || items.length === 0) {
-      return res.status(400).json({ error: 'Items are required' });
-    }
-    if (!delivery_address) {
-      return res.status(400).json({ error: 'Delivery address is required' });
-    }
-  
     try {
+      const {
+        user_id,
+        order_id,         // optional for delivery payments
+        items,            // only for order payments
+        email,
+        name,
+        phone,
+        delivery_address, // only for order payments
+        payment_type = 'order' // 'order' or 'delivery'
+      } = req.body;
+  
+      if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
+        return res.status(400).json({ error: 'Valid user_id is required' });
+      }
+  
+      if (!['order', 'delivery'].includes(payment_type)) {
+        return res.status(400).json({ error: 'Invalid payment_type' });
+      }
+  
       let totalAmount = 0;
   
-      // 1️⃣ Create order + items in transaction
-      const order = await sql.begin(async (tx) => {
-        const [newOrder] = await tx`
-  INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email)
-  VALUES (${user_id}, 'pending', ${delivery_address}, ${phone}, ${name}, ${email})
-  RETURNING id
-`;
-
-  
-        for (const item of items) {
-          const [product] = await tx`
-            SELECT price FROM products WHERE id = ${item.product_id}
-          `;
-          if (!product) throw new Error(`Product ${item.product_id} not found`);
-  
-          const itemTotal = product.price * item.quantity;
-          totalAmount += itemTotal;
-  
-          await tx`
-            INSERT INTO order_items (
-              order_id, product_id, quantity, unit_price, total_price
-            )
-            VALUES (
-              ${newOrder.id}, ${item.product_id}, ${item.quantity},
-              ${product.price}, ${itemTotal}
-            )
-          `;
+      // -----------------------
+      // 1️⃣ If order payment, create order + items
+      // -----------------------
+      let order;
+      if (payment_type === 'order') {
+        if (!items || items.length === 0) {
+          return res.status(400).json({ error: 'Items are required for order payment' });
         }
   
-        return { id: newOrder.id };
-      });
+        if (!delivery_address) {
+          return res.status(400).json({ error: 'Delivery address required' });
+        }
   
-      console.log(`✅ Order created: ${order.id}, total: ${totalAmount}`);
+        // Create order + items in transaction
+        order = await sql.begin(async (tx) => {
+          const [newOrder] = await tx`
+            INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email)
+            VALUES (${user_id}, 'pending', ${delivery_address}, ${phone}, ${name}, ${email})
+            RETURNING id
+          `;
   
-      // 2️⃣ Generate transaction reference
-      const tx_ref = `tx-${Date.now()}-${order.id}`;
+          for (const item of items) {
+            const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
+            if (!product) throw new Error(`Product not found: ${item.product_id}`);
   
-      // 3️⃣ Create payment link on Flutterwave
+            const itemTotal = product.price * item.quantity;
+            totalAmount += itemTotal;
+  
+            await tx`
+              INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
+              VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
+            `;
+          }
+  
+          return { id: newOrder.id };
+        });
+      } else if (payment_type === 'delivery') {
+        // -----------------------
+        // 2️⃣ If delivery payment, get order total from delivery_fee
+        // -----------------------
+        if (!order_id) {
+          return res.status(400).json({ error: 'order_id required for delivery payment' });
+        }
+  
+        const [existingOrder] = await sql`SELECT delivery_fee FROM orders WHERE id = ${order_id}`;
+        if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
+  
+        order = { id: order_id };
+        totalAmount = existingOrder.delivery_fee;
+      }
+  
+      // -----------------------
+      // 3️⃣ Generate tx_ref
+      // -----------------------
+      const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
+  
+      // -----------------------
+      // 4️⃣ Create Flutterwave Payment Link
+      // -----------------------
       const fwRes = await axios.post(
         'https://api.flutterwave.com/v3/payments',
         {
           tx_ref,
           amount: totalAmount,
           currency: 'NGN',
-          redirect_url: `${process.env.FRONTEND_URL}/payment-success?order_id=${order.id}`,
+          redirect_url: `${process.env.FRONTEND_URL}/payment-success?order_id=${order.id}&payment_type=${payment_type}`,
           customer: {
-            email: email || 'buyer@example.com',
+            email: email || 'zoyaprocurementcompany@gmail.com',
             name: name || 'Valued Customer',
-            phonenumber: phone || '08000000000'
+            phonenumber: phone || '08063203385'
           },
           customizations: {
-            title: 'Oluwaflo Payment',
-            description: `Payment for order ${order.id}`,
+            title: payment_type === 'order' ? 'Zoya Order Payment' : 'Zoya Delivery Payment',
+            description: payment_type === 'order' ? `Payment for order ${order.id}` : `Delivery fee for order ${order.id}`,
           },
         },
         {
           headers: {
-            Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+            Authorization: `Bearer ${FLW_SECRET_KEY}`,
             'Content-Type': 'application/json',
           },
         }
       );
   
       if (!fwRes.data || fwRes.data.status !== 'success') {
-        console.error('❌ Flutterwave create payment link failed:', fwRes.data);
         return res.status(500).json({ error: 'Failed to create payment link' });
       }
   
-      const paymentUrl = fwRes.data.data.link;
-  
-      // 4️⃣ Save transaction reference + total
+      // -----------------------
+      // 5️⃣ Save payment record
+      // -----------------------
       await sql`
-        UPDATE orders
-        SET payment_reference = ${tx_ref}, total_amount = ${totalAmount}
-        WHERE id = ${order.id}
+        INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
+        VALUES (${uuidv4()}, ${order.id}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, NOW())
       `;
   
-      console.log(`💰 Payment link created: ${paymentUrl}`);
-  
-      // 5️⃣ Respond to frontend
       return res.status(200).json({
         success: true,
         order_id: order.id,
-        payment_url: paymentUrl,
+        payment_type,
+        payment_url: fwRes.data.data.link,
+        tx_ref
       });
   
     } catch (err) {
-      console.error('❌ Create payment link error:', err);
+      console.error('❌ createPaymentLink error:', err);
       return res.status(500).json({ error: 'Internal server error' });
     }
   };
@@ -2004,50 +2026,58 @@ exports.getCategories = async (req, res) => {
   // ============================
   exports.initiatePayment = async (req, res) => {
     try {
-      const { amount, user_id, order_id, email, name, phone } = req.body;
+      const { amount, user_id, order_id, email, name, phone, payment_type = 'order' } = req.body;
   
       if (!amount || !user_id || !order_id) {
         return res.status(400).json({ message: 'Missing required payment fields' });
       }
   
-      const tx_ref = `Zoya-${Date.now()}`;
+      if (!['order', 'delivery'].includes(payment_type)) {
+        return res.status(400).json({ message: 'Invalid payment_type' });
+      }
   
-      const response = await flutterwave.post('/payments', {
-        tx_ref,
-        amount,
-        currency: 'NGN',
-        payment_options: 'card,banktransfer,ussd',
-        customer: {
-          email,
-          name,
-          phonenumber: phone,
-        },
-        customizations: {
-          title: 'Zoya Bulk Delivery',
-          description: 'Payment for goods on Zoya App',
-          logo: 'https://yourdomain.com/logo.png',
-        },
-        redirect_url: 'https://34b22809cbe8.ngrok-free.app/payment-success',
-      });
+      const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
   
-      // Save transaction to DB
+      // 1️⃣ Create Flutterwave payment
+      const response = await axios.post(
+        'https://api.flutterwave.com/v3/payments',
+        {
+          tx_ref,
+          amount,
+          currency: 'NGN',
+          payment_options: 'card,banktransfer,ussd',
+          customer: { email, name, phonenumber: phone },
+          customizations: {
+            title: payment_type === 'order' ? 'Zoya Order Payment' : 'Zoya Delivery Payment',
+            description: payment_type === 'order' ? `Payment for order ${order_id}` : `Delivery fee for order ${order_id}`,
+            logo: 'https://zoyaprocurement.com/logo.png',
+          },
+          redirect_url: `${process.env.FRONTEND_URL}/payment-success?order_id=${order_id}&payment_type=${payment_type}`,
+        },
+        {
+          headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' },
+        }
+      );
+  
+      // 2️⃣ Save payment in DB
       await sql`
-        INSERT INTO payments (
-          id, order_id, user_id, amount, status, payment_reference, created_at
-        ) VALUES (
-          ${uuidv4()}, ${order_id}, ${user_id}, ${amount}, 'pending', ${tx_ref}, NOW()
-        )
+        INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
+        VALUES (${uuidv4()}, ${order_id}, ${user_id}, ${amount}, 'pending', ${tx_ref}, ${payment_type}, NOW())
       `;
   
       return res.status(200).json({
         success: true,
-        paymentLink: response.data.data.link,
+        payment_url: response.data.data.link,
+        tx_ref,
+        payment_type,
       });
+  
     } catch (err) {
-      console.error('❌ Payment initiation error:', err.response?.data || err.message);
+      console.error('❌ initiatePayment error:', err.response?.data || err.message);
       return res.status(500).json({ message: 'Failed to initiate payment' });
     }
   };
+  
   
   // ============================
   // ✅ 2. Verify Payment (Manual)
@@ -2055,45 +2085,66 @@ exports.getCategories = async (req, res) => {
   exports.verifyPayment = async (req, res) => {
     try {
       const { tx_ref } = req.query;
-  
       if (!tx_ref) return res.status(400).json({ message: 'tx_ref is required' });
   
-      const existing = await sql`
-        SELECT * FROM payments WHERE payment_reference = ${tx_ref}
-      `;
+      // 1️⃣ Find payment in DB
+      const [payment] = await sql`SELECT * FROM payments WHERE payment_reference = ${tx_ref}`;
+      if (!payment) return res.status(404).json({ message: 'Payment not found' });
   
-      if (!existing.length) return res.status(404).json({ message: 'Payment not found' });
-  
-      if (existing[0].status === 'successful') {
-        return res.status(200).json({ message: 'Payment already verified' });
+      // 2️⃣ Skip if already completed
+      if (payment.status === 'completed') {
+        return res.status(200).json({ message: 'Payment already verified', payment });
       }
   
-      const response = await flutterwave.get(
-        `/transactions/verify_by_reference?tx_ref=${tx_ref}`
+      // 3️⃣ Verify with Flutterwave
+      const response = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`,
+        { headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` } }
       );
   
-      const paymentData = response.data.data;
+      const paymentData = response.data?.data;
+      if (!paymentData) throw new Error('Invalid verification response');
   
-      if (paymentData.status === 'successful') {
+      // 4️⃣ Map Flutterwave status to our DB status
+      const fwStatus = (paymentData.status || '').toLowerCase();
+      let newStatus = 'pending';
+      if (['successful', 'completed'].includes(fwStatus)) newStatus = 'completed';
+      else if (['failed', 'cancelled'].includes(fwStatus)) newStatus = 'cancelled';
+      else if (fwStatus === 'pending') newStatus = 'pending';
+  
+      // 5️⃣ Update payment status
+      await sql`
+        UPDATE payments
+        SET status = ${newStatus}, updated_at = NOW()
+        WHERE payment_reference = ${tx_ref}
+      `;
+  
+      // 6️⃣ Update order based on payment type
+      if (payment.order_id) {
+        let orderStatus = 'pending';
+        if (payment.payment_type === 'order') {
+          if (newStatus === 'completed') orderStatus = 'paid';
+          else if (newStatus === 'cancelled') orderStatus = 'cancelled';
+        } else if (payment.payment_type === 'delivery') {
+          if (newStatus === 'completed') orderStatus = 'delivery_paid';
+          else if (newStatus === 'cancelled') orderStatus = 'delivery_pending';
+        }
+  
         await sql`
-          UPDATE payments
-          SET status = 'successful'
-          WHERE payment_reference = ${tx_ref}
+          UPDATE orders
+          SET status = ${orderStatus}, updated_at = NOW()
+          WHERE id = ${payment.order_id}
         `;
-        return res.status(200).json({ success: true, message: 'Payment verified' });
-      } else {
-        await sql`
-          UPDATE payments
-          SET status = 'failed'
-          WHERE payment_reference = ${tx_ref}
-        `;
-        return res.status(400).json({ success: false, message: 'Payment failed or incomplete' });
       }
+  
+      return res.status(200).json({ success: true, status: newStatus, payment });
+  
     } catch (err) {
-      console.error('❌ Payment verification error:', err.response?.data || err.message);
+      console.error('❌ verifyPayment error:', err.response?.data || err.message);
       return res.status(500).json({ message: 'Failed to verify payment' });
     }
   };
+  
   
   // ============================
   // 🏦 3. Create Virtual Account
