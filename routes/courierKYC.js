@@ -23,32 +23,45 @@ router.post(
 // 🧠 Get courier info (including verification_status)
 router.get('/me', verifyToken, async (req, res) => {
   try {
-    console.log('🪪 Fetching courier info for user_id:', req.user.id);
+    console.log('🪪 Fetching user + courier info for user_id:', req.user.id);
 
     const result = await sql`
-      SELECT id, user_id, full_name, phone, verification_status
-      FROM couriers
-      WHERE user_id = ${req.user.id}
+      SELECT 
+        u.id AS user_id,
+        u.full_name,
+        u.email,
+        u.phone,
+        u.role,
+        u.status,
+        c.verification_status,
+        c.vehicle_type,
+        c.vehicle_plate,
+        c.selfie_url,
+        c.document_url
+      FROM users u
+      LEFT JOIN couriers c ON c.user_id = u.id
+      WHERE u.id = ${req.user.id}
       LIMIT 1
     `;
 
-    console.log('✅ Query result:', result);
-
     if (!result.length) {
-      console.log('⚠️ No courier found for user_id:', req.user.id);
-      return res.status(404).json({ success: false, message: 'Courier not found' });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    res.json({ success: true, courier: result[0] });
+    const user = result[0];
+
+    // Optionally prepend BASE_URL to images
+    const BASE_URL = process.env.BASE_URL || 'https://oluwaflozoya-backend.onrender.com';
+    if (user.selfie_url) user.selfie_url = `${BASE_URL}${user.selfie_url}`;
+    if (user.document_url) user.document_url = `${BASE_URL}${user.document_url}`;
+
+    res.json({ success: true, user });
   } catch (err) {
     console.error('❌ /api/courier/me error:', err.message);
-    res.status(500).json({
-      success: false,
-      message: 'Server error',
-      error: err.message, // 👈 this shows the actual SQL error
-    });
+    res.status(500).json({ success: false, message: 'Server error', error: err.message });
   }
 });
+
 
 
 module.exports = router;
