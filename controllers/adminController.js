@@ -17,6 +17,9 @@ const fetch = require('node-fetch');
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY; 
 
+const FLW_SECRET_KEY = process.env.FLW_SECRET_KEY;
+const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH;
+
 // ✅ Firebase Admin SDK Setup
 const admin = require("../config/firebase");
 
@@ -1850,7 +1853,7 @@ exports.getCategories = async (req, res) => {
   const crypto = require('crypto');
   const flutterwave = require('../utils/flutterwave');
   
-  const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
+  
 
   // Helper: Create order and order items in DB
   async function createOrder(user_id, items) {
