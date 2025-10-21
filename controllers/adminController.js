@@ -2033,7 +2033,11 @@ exports.getCategories = async (req, res) => {
         total_amount: totalAmount,
       });
     } catch (err) {
-      console.error('❌ createPaymentLink error:', err);
+      console.error('❌ createPaymentLink error:', {
+        message: err.message,
+        data: err.response?.data,
+        stack: err.stack,
+      });
       return res.status(500).json({ error: 'Internal server error' });
     }
   };
