@@ -33,6 +33,7 @@ router.get('/me', verifyToken, async (req, res) => {
         u.phone,
         u.role,
         u.status,
+        c.id AS courier_id,
         c.verification_status,
         c.vehicle_type,
         c.vehicle_plate,
@@ -48,14 +49,35 @@ router.get('/me', verifyToken, async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    const user = result[0];
+    const row = result[0];
+
+    // Split user and courier data
+    const user = {
+      id: row.user_id,
+      full_name: row.full_name,
+      email: row.email,
+      phone: row.phone,
+      role: row.role,
+      status: row.status,
+    };
+
+    const courier = row.courier_id
+      ? {
+          id: row.courier_id,
+          verification_status: row.verification_status,
+          vehicle_type: row.vehicle_type,
+          vehicle_plate: row.vehicle_plate,
+          selfie_url: row.selfie_url,
+          document_url: row.document_url,
+        }
+      : null;
 
     // Optionally prepend BASE_URL to images
     const BASE_URL = process.env.BASE_URL || 'https://oluwaflozoya-backend.onrender.com';
-    if (user.selfie_url) user.selfie_url = `${BASE_URL}${user.selfie_url}`;
-    if (user.document_url) user.document_url = `${BASE_URL}${user.document_url}`;
+    if (courier?.selfie_url) courier.selfie_url = `${BASE_URL}${courier.selfie_url}`;
+    if (courier?.document_url) courier.document_url = `${BASE_URL}${courier.document_url}`;
 
-    res.json({ success: true, user });
+    res.json({ success: true, user, courier });
   } catch (err) {
     console.error('❌ /api/courier/me error:', err.message);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
