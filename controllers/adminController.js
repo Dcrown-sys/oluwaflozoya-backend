@@ -558,91 +558,103 @@ exports.createOrder = async (req, res) => {
   
   
   
+// =============================
+// Get all orders for a specific user (buyer)
+// =============================
+exports.getOrdersByUser = async (req, res) => {
+  const { user_id } = req.params;
 
-  // GET /orders/:user_id
-  exports.getOrdersByUser = async (req, res) => {
-    const { user_id } = req.params;
-  
-    try {
-      const rows = await sql`
-        SELECT 
-          o.id AS order_id,
-          o.status,
-          o.created_at,
-          o.total_amount,
-          o.delivery_address,
-          o.courier_id,
-          u.full_name AS courier_name,   -- ✅ Fetch courier's name from users table
-          u.phone AS courier_phone,      -- ✅ Fetch courier's phone from users table
-          o.courier_location,
-          oi.product_id,
-          p.name AS product_name,
-          oi.quantity,
-          oi.unit_price,
-          oi.total_price
-        FROM orders o
-        JOIN order_items oi ON o.id = oi.order_id
-        JOIN products p ON oi.product_id = p.id
-        LEFT JOIN users u ON o.courier_id = u.id   -- ✅ Join users table for courier info
-        WHERE o.user_id = ${user_id}
-        ORDER BY o.created_at DESC
-      `;
-  
-      const ordersMap = new Map();
-  
-      for (const row of rows) {
-        const {
-          order_id,
+  try {
+    const rows = await sql`
+      SELECT 
+        o.id AS order_id,
+        o.status,
+        o.created_at,
+        o.total_amount,
+        o.delivery_address,
+        o.courier_id,
+        c.full_name AS courier_name,
+        c.phone_number AS courier_phone,
+        c.vehicle_type,
+        c.license_plate,
+        o.distance_km,
+        o.delivery_fee,
+        oi.product_id,
+        p.name AS product_name,
+        oi.quantity,
+        oi.unit_price,
+        oi.total_price
+      FROM orders o
+      JOIN order_items oi ON o.id = oi.order_id
+      JOIN products p ON oi.product_id = p.id
+      LEFT JOIN couriers c ON o.courier_id = c.id
+      WHERE o.user_id = ${user_id}
+      ORDER BY o.created_at DESC
+    `;
+
+    const ordersMap = new Map();
+
+    for (const row of rows) {
+      const {
+        order_id,
+        status,
+        created_at,
+        total_amount,
+        delivery_address,
+        courier_id,
+        courier_name,
+        courier_phone,
+        vehicle_type,
+        license_plate,
+        distance_km,
+        delivery_fee,
+        product_id,
+        product_name,
+        quantity,
+        unit_price,
+        total_price,
+      } = row;
+
+      if (!ordersMap.has(order_id)) {
+        ordersMap.set(order_id, {
+          id: order_id,
           status,
           created_at,
-          total_amount,
+          total_price: total_amount,
           delivery_address,
-          courier_id,
-          courier_name,
-          courier_phone,
-          courier_location,
-          product_id,
-          product_name,
-          quantity,
-          unit_price,
-          total_price
-        } = row;
-  
-        if (!ordersMap.has(order_id)) {
-          ordersMap.set(order_id, {
-            id: order_id,
-            status,
-            created_at,
-            total_price: total_amount,
-            delivery_address,
-            courier: courier_id ? {
-              id: courier_id,
-              name: courier_name || null,   // ✅ Now comes from users table
-              phone: courier_phone || null, // ✅ Now comes from users table
-              location: courier_location,
-            } : null,
-            items: []
-          });
-        }
-  
-        ordersMap.get(order_id).items.push({
-          product_id,
-          product_name,
-          quantity,
-          unit_price,
-          total_price,
+          delivery_fee,
+          distance_km,
+          courier: courier_id
+            ? {
+                id: courier_id,
+                name: courier_name || null,
+                phone: courier_phone || null,
+                vehicle_type,
+                license_plate,
+              }
+            : null,
+          items: [],
         });
       }
-  
-      res.status(200).json(Array.from(ordersMap.values()));
-    } catch (err) {
-      console.error("Error fetching orders:", err);
-      res.status(500).json({ message: "Failed to retrieve orders" });
+
+      ordersMap.get(order_id).items.push({
+        product_id,
+        product_name,
+        quantity,
+        unit_price,
+        total_price,
+      });
     }
-  };
-  
+
+    res.status(200).json({ success: true, data: Array.from(ordersMap.values()) });
+  } catch (err) {
+    console.error("❌ Error fetching orders:", err);
+    res.status(500).json({ message: "Failed to retrieve orders" });
+  }
+};
+
 // =============================
-// Get single order by ID
+// Get single order (buyer or admin)
 // =============================
 exports.getOrderById = async (req, res) => {
   const { id } = req.params;
@@ -652,33 +664,15 @@ exports.getOrderById = async (req, res) => {
   }
 
   try {
-    console.log("🔹 Fetching order with ID:", id);
-
-    // Fetch order with items
     const [order] = await sql`
       SELECT 
-        o.id,
-        o.user_id,
-        o.status,
-        o.delivery_address,
-        o.phone_number,
-        o.delivery_notes,
-        o.total_amount AS total_price,
-        o.delivery_fee,
-        o.fee,
-        o.bonus,
-        o.courier_id,
-        o.courier_name,
-        o.courier_phone,
-        o.courier_location,
-        o.dropoff_latitude AS dropoff_lat,
-        o.dropoff_longitude AS dropoff_lng,
-        o.rating_status,
-        o.courier_rating,
-        o.points_awarded,
-        o.referral_code_used,
-        o.created_at,
-        o.updated_at,
+        o.*,
+        u.full_name AS buyer_name,
+        u.email AS buyer_email,
+        c.full_name AS courier_name,
+        c.phone_number AS courier_phone,
+        c.vehicle_type,
+        c.license_plate,
         COALESCE(
           json_agg(
             json_build_object(
@@ -694,50 +688,23 @@ exports.getOrderById = async (req, res) => {
         ) AS items
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN users u ON o.user_id = u.id
+      LEFT JOIN couriers c ON o.courier_id = c.id
       WHERE o.id = ${id}
-      GROUP BY o.id
+      GROUP BY o.id, u.full_name, u.email, c.full_name, c.phone_number, c.vehicle_type, c.license_plate
     `;
 
     if (!order) {
       return res.status(404).json({ success: false, message: "Order not found" });
     }
 
-    console.log("🔹 Order fetched:", order);
-
-    return res.json({ success: true, data: order });
+    res.json({ success: true, data: order });
   } catch (err) {
     console.error("❌ Error fetching order details:", err);
-    return res.status(500).json({ success: false, message: "Error fetching order details" });
+    res.status(500).json({ success: false, message: "Error fetching order details" });
   }
 };
 
-// buyer order
-exports.getOrderByIdForUser = async (req, res) => {
-  const { orderId } = req.params;
-  const { userId } = req.query; // user UUID from frontend or Postman
-
-  if (!userId) {
-    return res.status(400).json({ success: false, message: "Missing userId query parameter" });
-  }
-
-  try {
-    const result = await sql`
-      SELECT *
-      FROM orders
-      WHERE id = ${orderId} AND user_id = ${userId}
-      LIMIT 1
-    `;
-
-    if (!result || result.length === 0) {
-      return res.status(404).json({ success: false, message: "Order not found or doesn't belong to this user" });
-    }
-
-    res.json({ success: true, data: result[0] });
-  } catch (err) {
-    console.error("Error fetching order details:", err);
-    res.status(500).json({ success: false, message: "Error fetching order details", error: err.message });
-  }
-};
 
   
 // adminController.assignCourier

@@ -29,6 +29,8 @@ const {
 
 const { firebaseLogin } = require('../controllers/authController');
 
+
+
 // ============================
 // Firebase login
 // ============================
@@ -114,7 +116,7 @@ router.post('/orders', adminController.createOrder);
 router.get('/orders/user/:user_id', adminController.getOrdersByUser);
 router.get('/orders/:id', adminController.getOrderById);
 // routes/admin.js
-router.get('/buyer/orders/:orderId', adminController.getOrderByIdForUser);
+
 
 router.get('/orders', adminController.getAllOrdersAdmin);
 router.patch('/orders/:id/status', adminController.updateOrderStatus);
@@ -172,8 +174,7 @@ router.post('/assign-courier/:orderId', adminController.assignCourierToOrder);
 router.get('/delivery-tracking/:delivery_id', adminController.getDeliveryTracking);
 router.get('/courier/deliveries/history', verifyCourier, adminController.getCourierDeliveryHistory);
 
-router.post('/courier/order/:id/rate', verifyCourier, adminController.courierRateOrder);
-router.post('/ratings/courier', verifyToken, adminController.rateCourier);
+router.post('/orders/:orderId/rate', verifyToken, adminController.rateCourier);
 
 // ============================
 // Ads

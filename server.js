@@ -15,6 +15,7 @@ const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
+const paymentsRoutes = require('./routes/paymentsRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -41,6 +42,7 @@ app.use('/api/admin', adminKYCApprovalRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/payments', paymentsRoutes);
 
 // ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {
