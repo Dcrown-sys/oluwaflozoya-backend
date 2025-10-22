@@ -574,9 +574,9 @@ exports.getOrdersByUser = async (req, res) => {
         o.delivery_address,
         o.courier_id,
         c.full_name AS courier_name,
-        c.phone_number AS courier_phone,
+        c.phone AS courier_phone,
         c.vehicle_type,
-        c.license_plate,
+        c.vehicle_plate,
         o.distance_km,
         o.delivery_fee,
         oi.product_id,
@@ -605,7 +605,7 @@ exports.getOrdersByUser = async (req, res) => {
         courier_name,
         courier_phone,
         vehicle_type,
-        license_plate,
+        vehicle_plate,
         distance_km,
         delivery_fee,
         product_id,
@@ -630,7 +630,7 @@ exports.getOrdersByUser = async (req, res) => {
                 name: courier_name || null,
                 phone: courier_phone || null,
                 vehicle_type,
-                license_plate,
+                vehicle_plate,
               }
             : null,
           items: [],
@@ -653,11 +653,10 @@ exports.getOrdersByUser = async (req, res) => {
   }
 };
 
-// =============================
-// Get single order (buyer or admin)
-// =============================
+/// adminController.js
 exports.getOrderById = async (req, res) => {
   const { id } = req.params;
+  const userId = req.query.userId; // optional: for buyer-specific access
 
   if (!id) {
     return res.status(400).json({ success: false, message: "Order ID is required" });
@@ -667,31 +666,40 @@ exports.getOrderById = async (req, res) => {
     const [order] = await sql`
       SELECT 
         o.*,
-        u.full_name AS buyer_name,
-        u.email AS buyer_email,
-        c.full_name AS courier_name,
-        c.phone_number AS courier_phone,
-        c.vehicle_type,
-        c.license_plate,
+        -- Buyer info
+        json_build_object(
+          'id', u.id,
+          'name', u.full_name,
+          'email', u.email,
+          'phone', u.phone
+        ) AS buyer,
+        -- Courier info (can be null)
+        json_build_object(
+          'id', c.id,
+          'name', c.full_name,
+          'phone', c.phone,
+          'vehicle_type', c.vehicle_type,
+          'vehicle_plate', c.vehicle_plate
+        ) AS courier,
+        -- Items
         COALESCE(
           json_agg(
             json_build_object(
               'id', oi.id,
               'product_id', oi.product_id,
-              'name', oi.name,
-              'price', oi.price,
               'quantity', oi.quantity,
-              'image', oi.image_url
+              'unit_price', oi.unit_price,
+              'total_price', oi.total_price
             )
           ) FILTER (WHERE oi.id IS NOT NULL),
           '[]'
         ) AS items
       FROM orders o
+      LEFT JOIN users u ON u.id = o.user_id
+      LEFT JOIN couriers c ON c.id = o.courier_id
       LEFT JOIN order_items oi ON oi.order_id = o.id
-      LEFT JOIN users u ON o.user_id = u.id
-      LEFT JOIN couriers c ON o.courier_id = c.id
-      WHERE o.id = ${id}
-      GROUP BY o.id, u.full_name, u.email, c.full_name, c.phone_number, c.vehicle_type, c.license_plate
+      ${userId ? sql`WHERE o.id = ${id} AND o.user_id = ${userId}` : sql`WHERE o.id = ${id}`}
+      GROUP BY o.id, u.id, c.id
     `;
 
     if (!order) {
@@ -704,6 +712,7 @@ exports.getOrderById = async (req, res) => {
     res.status(500).json({ success: false, message: "Error fetching order details" });
   }
 };
+
 
 
   
