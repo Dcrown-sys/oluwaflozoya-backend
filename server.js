@@ -17,6 +17,7 @@ const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const paymentsRoutes = require('./routes/paymentsRoutes');
 const courierRoutes = require("./routes/courierRoutes");
+const deliveryRoutes = require("./routes/deliveryRoutes")
 
 
 const app = express();
@@ -47,6 +48,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/admin', require('./routes/adminOrdersRoutes'));
 app.use("/api/couriers", courierRoutes);
+app.use("/api/delivery", deliveryRoutes);
 
 
 // ======== SOCKET.IO REAL-TIME ========

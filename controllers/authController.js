@@ -28,15 +28,34 @@ exports.firebaseLogin = async (req, res) => {
     }
 
     // 2️⃣ Look up user in DB
-    const result = await sql`SELECT * FROM users WHERE email = ${email} LIMIT 1`;
-    console.log('🔹 DB query result:', result);
-
-    if (!result || result.length === 0) {
-      console.warn(`⚠️ User not found in DB for email: ${email}`);
-      return res.status(404).json({ success: false, error: 'User not found' });
+    let user;
+    if (decoded.role === 'courier') {
+      // Courier login: include verification_status
+      const [courier] = await sql`
+        SELECT id, full_name, email, role, status, verification_status
+        FROM couriers
+        WHERE email = ${email}
+        LIMIT 1
+      `;
+      if (!courier) {
+        console.warn(`⚠️ Courier not found in DB for email: ${email}`);
+        return res.status(404).json({ success: false, error: 'Courier not found' });
+      }
+      user = courier;
+    } else {
+      // Normal user
+      const [normalUser] = await sql`
+        SELECT id, full_name, email, role, status
+        FROM users
+        WHERE email = ${email}
+        LIMIT 1
+      `;
+      if (!normalUser) {
+        console.warn(`⚠️ User not found in DB for email: ${email}`);
+        return res.status(404).json({ success: false, error: 'User not found' });
+      }
+      user = normalUser;
     }
-
-    const user = result[0];
 
     // 3️⃣ Generate backend JWT
     const token = jwt.sign(
@@ -46,13 +65,15 @@ exports.firebaseLogin = async (req, res) => {
     );
     console.log('✅ JWT generated for user:', user.id);
 
-    // 4️⃣ Return response exactly frontend expects
+    // 4️⃣ Build response user object
     const responseUser = {
       id: user.id,
-      full_name: user.name || user.full_name || 'User',
+      full_name: user.full_name || 'User',
       email: user.email,
       role: user.role,
-      ...profileData // merge extra profileData safely
+      status: user.status,
+      verification_status: user.verification_status || null,
+      ...profileData
     };
 
     console.log('🔹 Sending response user object:', responseUser);
@@ -66,7 +87,6 @@ exports.firebaseLogin = async (req, res) => {
   } catch (err) {
     console.error('❌ Firebase login error:', err);
 
-    // Provide more informative error to help frontend debug
     const message = err.code ? `${err.code}: ${err.message}` : err.message;
     return res.status(401).json({ success: false, error: `Invalid Firebase token - ${message}` });
   }
