@@ -101,7 +101,7 @@ router.get('/payment-success', (req, res) => {
 });
 
 // Courier submits KYC (Courier protected route)
-router.post('/assign-courier/:orderId', adminController.assignCourierToOrder);
+
 
 
 
@@ -118,8 +118,7 @@ router.get('/orders/:id', adminController.getOrderById);
 // routes/admin.js
 
 
-router.get('/orders', adminController.getAllOrdersAdmin);
-router.patch('/orders/:id/status', adminController.updateOrderStatus);
+// router.get('/orders', adminController.getAllOrdersAdmin);
 router.get('/ping', (req, res) => res.send('✅ Admin API is alive!'));
 
 // ============================
@@ -170,10 +169,11 @@ router.get('/courier/:courierId/tickets', verifyCourier, adminController.getCour
 router.post('/courier/:courierId/tickets', verifyCourier, adminController.createCourierTicket);
 
 router.post('/assign-delivery', verifyAdmin, adminController.assignDelivery);
-router.post('/assign-courier/:orderId', adminController.assignCourierToOrder);
 router.get('/delivery-tracking/:delivery_id', adminController.getDeliveryTracking);
 router.get('/courier/deliveries/history', verifyCourier, adminController.getCourierDeliveryHistory);
 
+
+router.post('/ratings/courier', verifyToken, adminController.rateCourier);
 router.post('/orders/:orderId/rate', verifyToken, adminController.rateCourier);
 
 // ============================

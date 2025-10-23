@@ -17,6 +17,7 @@ const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
 const paymentsRoutes = require('./routes/paymentsRoutes');
 
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -43,6 +44,8 @@ app.use('/api/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentsRoutes);
+app.use('/api/admin', require('./routes/adminOrdersRoutes'));
+
 
 // ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {

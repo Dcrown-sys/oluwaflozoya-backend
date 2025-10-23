@@ -717,129 +717,129 @@ exports.getOrderById = async (req, res) => {
 
   
 // adminController.assignCourier
-exports.assignCourierToOrder = async (req, res) => {
-    const { orderId } = req.params;
-    const { pickup_address, pickup_lat, pickup_lng } = req.body;
+// exports.assignCourierToOrder = async (req, res) => {
+//     const { orderId } = req.params;
+//     const { pickup_address, pickup_lat, pickup_lng } = req.body;
   
-    try {
-      console.log(`ℹ️ Assigning courier for order ${orderId}...`);
+//     try {
+//       console.log(`ℹ️ Assigning courier for order ${orderId}...`);
   
-      // 1️⃣ Fetch order + user info (buyer = dropoff)
-      const [orderData] = await sql`
-        SELECT o.id, o.delivery_address,
-               u.address AS user_address, u.latitude AS user_lat, u.longitude AS user_lng
-        FROM orders o
-        LEFT JOIN users u ON u.id = o.user_id
-        WHERE o.id = ${orderId}
-      `;
+//       // 1️⃣ Fetch order + user info (buyer = dropoff)
+//       const [orderData] = await sql`
+//         SELECT o.id, o.delivery_address,
+//                u.address AS user_address, u.latitude AS user_lat, u.longitude AS user_lng
+//         FROM orders o
+//         LEFT JOIN users u ON u.id = o.user_id
+//         WHERE o.id = ${orderId}
+//       `;
   
-      if (!orderData) return res.status(404).json({ error: "Order not found" });
+//       if (!orderData) return res.status(404).json({ error: "Order not found" });
   
-      // 2️⃣ Resolve dropoff coords (buyer address)
-      let dropoffLat = orderData.user_lat;
-      let dropoffLng = orderData.user_lng;
-      let dropoffAddress = orderData.delivery_address || orderData.user_address;
+//       // 2️⃣ Resolve dropoff coords (buyer address)
+//       let dropoffLat = orderData.user_lat;
+//       let dropoffLng = orderData.user_lng;
+//       let dropoffAddress = orderData.delivery_address || orderData.user_address;
   
-      if ((!dropoffLat || !dropoffLng) && dropoffAddress) {
-        const geo = await geocodeAddress(dropoffAddress);
-        if (geo) {
-          dropoffLat = geo.lat;
-          dropoffLng = geo.lng;
-        }
-      }
+//       if ((!dropoffLat || !dropoffLng) && dropoffAddress) {
+//         const geo = await geocodeAddress(dropoffAddress);
+//         if (geo) {
+//           dropoffLat = geo.lat;
+//           dropoffLng = geo.lng;
+//         }
+//       }
   
-      // 3️⃣ Find nearest courier
-      const [courier] = await sql`
-        SELECT id, full_name, phone, latitude, longitude, address
-        FROM users
-        WHERE role = 'courier'
-          AND latitude IS NOT NULL
-          AND longitude IS NOT NULL
-        ORDER BY
-          (6371 * acos(
-            cos(radians(${dropoffLat || 0})) *
-            cos(radians(latitude)) *
-            cos(radians(longitude) - radians(${dropoffLng || 0})) +
-            sin(radians(${dropoffLat || 0})) *
-            sin(radians(latitude))
-          )) ASC
-        LIMIT 1
-      `;
+//       // 3️⃣ Find nearest courier
+//       const [courier] = await sql`
+//         SELECT id, full_name, phone, latitude, longitude, address
+//         FROM users
+//         WHERE role = 'courier'
+//           AND latitude IS NOT NULL
+//           AND longitude IS NOT NULL
+//         ORDER BY
+//           (6371 * acos(
+//             cos(radians(${dropoffLat || 0})) *
+//             cos(radians(latitude)) *
+//             cos(radians(longitude) - radians(${dropoffLng || 0})) +
+//             sin(radians(${dropoffLat || 0})) *
+//             sin(radians(latitude))
+//           )) ASC
+//         LIMIT 1
+//       `;
   
-      if (!courier) return res.status(404).json({ error: "No available couriers nearby" });
+//       if (!courier) return res.status(404).json({ error: "No available couriers nearby" });
   
-      // 4️⃣ Prevent duplicate assignment
-      const [existing] = await sql`SELECT id FROM deliveries WHERE order_id = ${orderId}`;
-      if (existing) return res.status(400).json({ error: "Order already has a courier assigned" });
+//       // 4️⃣ Prevent duplicate assignment
+//       const [existing] = await sql`SELECT id FROM deliveries WHERE order_id = ${orderId}`;
+//       if (existing) return res.status(400).json({ error: "Order already has a courier assigned" });
   
-      // 5️⃣ Resolve pickup info (from input or courier’s current location)
-      let finalPickupAddress = pickup_address || courier.address || "Courier current location";
-      let finalPickupLat = pickup_lat || courier.latitude;
-      let finalPickupLng = pickup_lng || courier.longitude;
+//       // 5️⃣ Resolve pickup info (from input or courier’s current location)
+//       let finalPickupAddress = pickup_address || courier.address || "Courier current location";
+//       let finalPickupLat = pickup_lat || courier.latitude;
+//       let finalPickupLng = pickup_lng || courier.longitude;
   
-      if ((!finalPickupLat || !finalPickupLng) && finalPickupAddress) {
-        const geo = await geocodeAddress(finalPickupAddress);
-        if (geo) {
-          finalPickupLat = geo.lat;
-          finalPickupLng = geo.lng;
-        }
-      }
+//       if ((!finalPickupLat || !finalPickupLng) && finalPickupAddress) {
+//         const geo = await geocodeAddress(finalPickupAddress);
+//         if (geo) {
+//           finalPickupLat = geo.lat;
+//           finalPickupLng = geo.lng;
+//         }
+//       }
   
-      // 6️⃣ Insert into deliveries table
-      const [delivery] = await sql`
-        INSERT INTO deliveries (
-          order_id,
-          courier_id,
-          pickup_address,
-          pickup_latitude,
-          pickup_longitude,
-          dropoff_address,
-          dropoff_latitude,
-          dropoff_longitude,
-          status
-        )
-        VALUES (
-          ${orderId},
-          ${courier.id},
-          ${finalPickupAddress},
-          ${finalPickupLat},
-          ${finalPickupLng},
-          ${dropoffAddress},
-          ${dropoffLat},
-          ${dropoffLng},
-          'assigned'
-        )
-        RETURNING *
-      `;
+//       // 6️⃣ Insert into deliveries table
+//       const [delivery] = await sql`
+//         INSERT INTO deliveries (
+//           order_id,
+//           courier_id,
+//           pickup_address,
+//           pickup_latitude,
+//           pickup_longitude,
+//           dropoff_address,
+//           dropoff_latitude,
+//           dropoff_longitude,
+//           status
+//         )
+//         VALUES (
+//           ${orderId},
+//           ${courier.id},
+//           ${finalPickupAddress},
+//           ${finalPickupLat},
+//           ${finalPickupLng},
+//           ${dropoffAddress},
+//           ${dropoffLat},
+//           ${dropoffLng},
+//           'assigned'
+//         )
+//         RETURNING *
+//       `;
   
-      // 7️⃣ Get products in this order (so courier knows what to carry)
-      const orderItems = await sql`
-        SELECT oi.product_id, p.name, oi.quantity, oi.unit_price, oi.total_price
-        FROM order_items oi
-        JOIN products p ON p.id = oi.product_id
-        WHERE oi.order_id = ${orderId}
-      `;
+//       // 7️⃣ Get products in this order (so courier knows what to carry)
+//       const orderItems = await sql`
+//         SELECT oi.product_id, p.name, oi.quantity, oi.unit_price, oi.total_price
+//         FROM order_items oi
+//         JOIN products p ON p.id = oi.product_id
+//         WHERE oi.order_id = ${orderId}
+//       `;
   
-      console.log(`🚚 Courier ${courier.id} assigned to order ${orderId}`);
+//       console.log(`🚚 Courier ${courier.id} assigned to order ${orderId}`);
   
-      res.json({
-        message: "Courier assigned successfully",
-        courier: {
-          id: courier.id,
-          full_name: courier.full_name,
-          phone: courier.phone,
-          current_latitude: courier.latitude,
-          current_longitude: courier.longitude,
-          address: courier.address || "",
-        },
-        delivery,
-        items: orderItems,
-      });
-    } catch (err) {
-      console.error("❌ Error assigning courier:", err.message);
-      res.status(500).json({ error: "Failed to assign courier" });
-    }
-  };
+//       res.json({
+//         message: "Courier assigned successfully",
+//         courier: {
+//           id: courier.id,
+//           full_name: courier.full_name,
+//           phone: courier.phone,
+//           current_latitude: courier.latitude,
+//           current_longitude: courier.longitude,
+//           address: courier.address || "",
+//         },
+//         delivery,
+//         items: orderItems,
+//       });
+//     } catch (err) {
+//       console.error("❌ Error assigning courier:", err.message);
+//       res.status(500).json({ error: "Failed to assign courier" });
+//     }
+//   };
 
 
 
@@ -1362,88 +1362,88 @@ console.log({
   
   
 // controllers/adminController.js
-exports.getAllOrdersAdmin = async (req, res) => {
-    try {
-      // Fetch orders with buyer info and order items
-      const rows = await sql`
-        SELECT 
-          o.id AS order_id,
-          o.status,
-          o.created_at,
-          o.total_amount,
-          o.delivery_address,
-          o.phone_number,
-          o.payment_reference,
-          u.id AS user_id,
-          u.full_name AS user_name,
-          u.email AS user_email,
-          u.phone AS user_phone,
-          o.courier_id,
-          o.courier_name,
-          o.courier_phone,
-          oi.id AS order_item_id,
-          oi.product_id,
-          oi.quantity,
-          oi.unit_price,
-          oi.total_price,
-          p.name AS product_name
-        FROM orders o
-        JOIN users u ON o.user_id = u.id
-        LEFT JOIN order_items oi ON o.id = oi.order_id
-        LEFT JOIN products p ON oi.product_id = p.id
-        ORDER BY o.created_at DESC;
-      `;
+// exports.getAllOrdersAdmin = async (req, res) => {
+//     try {
+//       // Fetch orders with buyer info and order items
+//       const rows = await sql`
+//         SELECT 
+//           o.id AS order_id,
+//           o.status,
+//           o.created_at,
+//           o.total_amount,
+//           o.delivery_address,
+//           o.phone_number,
+//           o.payment_reference,
+//           u.id AS user_id,
+//           u.full_name AS user_name,
+//           u.email AS user_email,
+//           u.phone AS user_phone,
+//           o.courier_id,
+//           o.courier_name,
+//           o.courier_phone,
+//           oi.id AS order_item_id,
+//           oi.product_id,
+//           oi.quantity,
+//           oi.unit_price,
+//           oi.total_price,
+//           p.name AS product_name
+//         FROM orders o
+//         JOIN users u ON o.user_id = u.id
+//         LEFT JOIN order_items oi ON o.id = oi.order_id
+//         LEFT JOIN products p ON oi.product_id = p.id
+//         ORDER BY o.created_at DESC;
+//       `;
   
-      const ordersMap = new Map();
+//       const ordersMap = new Map();
   
-      for (const row of rows) {
-        const orderId = row.order_id;
+//       for (const row of rows) {
+//         const orderId = row.order_id;
   
-        if (!ordersMap.has(orderId)) {
-          ordersMap.set(orderId, {
-            id: orderId,
-            status: row.status,
-            created_at: row.created_at,
-            total_amount: row.total_amount,
-            delivery_address: row.delivery_address,
-            phone_number: row.phone_number,
-            payment_reference: row.payment_reference,
-            user: {
-              id: row.user_id,
-              name: row.user_name,
-              email: row.user_email,
-              phone: row.user_phone,
-            },
-            // Only include courier info if courier_id exists (assigned)
-            courier: row.courier_id
-              ? {
-                  id: row.courier_id,
-                  name: row.courier_name,
-                  phone: row.courier_phone,
-                }
-              : null,
-            items: [],
-          });
-        }
+//         if (!ordersMap.has(orderId)) {
+//           ordersMap.set(orderId, {
+//             id: orderId,
+//             status: row.status,
+//             created_at: row.created_at,
+//             total_amount: row.total_amount,
+//             delivery_address: row.delivery_address,
+//             phone_number: row.phone_number,
+//             payment_reference: row.payment_reference,
+//             user: {
+//               id: row.user_id,
+//               name: row.user_name,
+//               email: row.user_email,
+//               phone: row.user_phone,
+//             },
+//             // Only include courier info if courier_id exists (assigned)
+//             courier: row.courier_id
+//               ? {
+//                   id: row.courier_id,
+//                   name: row.courier_name,
+//                   phone: row.courier_phone,
+//                 }
+//               : null,
+//             items: [],
+//           });
+//         }
   
-        if (row.order_item_id) {
-          ordersMap.get(orderId).items.push({
-            id: row.order_item_id,
-            product_id: row.product_id,
-            product_name: row.product_name,
-            quantity: row.quantity,
-            unit_price: row.unit_price,
-            total_price: row.total_price,
-          });
-        }
-      }
+//         if (row.order_item_id) {
+//           ordersMap.get(orderId).items.push({
+//             id: row.order_item_id,
+//             product_id: row.product_id,
+//             product_name: row.product_name,
+//             quantity: row.quantity,
+//             unit_price: row.unit_price,
+//             total_price: row.total_price,
+//           });
+//         }
+//       }
   
-      res.json({ orders: Array.from(ordersMap.values()) });
-    } catch (err) {
-      console.error('getAllOrdersAdmin error', err);
-      res.status(500).json({ message: 'Failed to fetch orders' });
-    }
-  };
+//       res.json({ orders: Array.from(ordersMap.values()) });
+//     } catch (err) {
+//       console.error('getAllOrdersAdmin error', err);
+//       res.status(500).json({ message: 'Failed to fetch orders' });
+//     }
+//   };
   
   
   
