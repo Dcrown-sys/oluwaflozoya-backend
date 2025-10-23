@@ -10,7 +10,7 @@ const path = require('path');
 // Controllers & routes
 const adminController = require('./controllers/adminController');
 const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
-const geocodeRoutes = require("./routes/geocode");
+const geocodeRoutes = require("./routes/geocodeRoutes");
 const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
 const authRoutes = require('./routes/auth');
