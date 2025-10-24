@@ -5,26 +5,28 @@ const { createDeliveryPaymentLink } = require('../utils/flutterwaveHelpers');
 exports.assignCourier = async (req, res) => {
   const adminId = req.user?.id;
   const { orderId } = req.params;
-  const { courierId, pickupAddress, dropoffAddress } = req.body;
 
-  if (!adminId) 
+  // ✅ Match frontend naming (snake_case)
+  const { courier_id, pickup_address, dropoff_address } = req.body;
+
+  if (!adminId)
     return res.status(401).json({ success: false, message: 'Unauthorized' });
-    
-  if (!courierId) 
+
+  if (!courier_id)
     return res.status(400).json({ success: false, message: 'Courier ID required' });
 
   try {
     // 1️⃣ Fetch the order
     const [order] = await sql`SELECT * FROM orders WHERE id = ${orderId}`;
-    if (!order) 
+    if (!order)
       return res.status(404).json({ success: false, message: 'Order not found' });
 
     // 2️⃣ Update order with courier assignment
     const [updatedOrder] = await sql`
       UPDATE orders
-      SET courier_id = ${courierId},
-          pickup_address = ${pickupAddress},
-          delivery_address = ${dropoffAddress},
+      SET courier_id = ${courier_id},
+          pickup_address = ${pickup_address},
+          delivery_address = ${dropoff_address},
           status = 'pending'
       WHERE id = ${orderId}
       RETURNING id, user_id, status, created_at, delivery_address, pickup_address, courier_id;
@@ -32,7 +34,7 @@ exports.assignCourier = async (req, res) => {
 
     // 3️⃣ Prepare payment data for Flutterwave
     const txRef = `delivery-${orderId}-${Date.now()}`;
-    const phoneNumber = order.phone_number.startsWith('0')
+    const phoneNumber = order.phone_number?.startsWith('0')
       ? '+234' + order.phone_number.slice(1)
       : order.phone_number;
 
