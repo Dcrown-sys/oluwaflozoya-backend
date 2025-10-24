@@ -1,7 +1,7 @@
+// controllers/paymentController.js
 const { createDeliveryPaymentLink } = require('../utils/flutterwaveHelpers');
 const { sql } = require('../db');
 
-// Initiate payment for order delivery
 exports.payOrderDelivery = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -14,17 +14,17 @@ exports.payOrderDelivery = async (req, res) => {
     }
     const order = orders[0];
 
-    // 2️⃣ Validate delivery fee
-    if (!order.delivery_fee || order.delivery_fee < 1) {
-      return res.status(400).json({ message: 'Invalid delivery fee amount' });
-    }
-
-    // 3️⃣ Fetch user info from DB (JWT may not include email/name)
-    const users = await sql`SELECT name, email FROM users WHERE id = ${userId}`;
+    // 2️⃣ Fetch user info from DB (JWT may not include email/name)
+    const users = await sql`SELECT name, email, phone_number FROM users WHERE id = ${userId}`;
     if (!users || users.length === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
     const user = users[0];
+
+    // 3️⃣ Prepare phone number in international format
+    const phoneNumber = user.phone_number.startsWith('0')
+      ? '+234' + user.phone_number.slice(1)
+      : user.phone_number;
 
     // 4️⃣ Prepare payment data
     const txRef = `delivery-${orderId}-${Date.now()}`;
@@ -36,11 +36,13 @@ exports.payOrderDelivery = async (req, res) => {
       customer: {
         email: user.email,
         name: user.name,
+        phonenumber: phoneNumber,
       },
-      payment_type: 'delivery',
       order_id: orderId,
       user_id: userId,
     };
+
+    console.log('Flutterwave payload:', paymentData); // ✅ log payload for debugging
 
     // 5️⃣ Create payment link via Flutterwave helper
     const response = await createDeliveryPaymentLink(paymentData);
@@ -76,7 +78,7 @@ exports.payOrderDelivery = async (req, res) => {
     // 7️⃣ Return payment link
     res.json({ paymentLink: response.link, txRef });
   } catch (err) {
-    console.error('❌ Error initiating delivery payment:', err);
+    console.error('❌ Error initiating delivery payment:', err.response?.data || err.message);
     res.status(500).json({ message: 'Failed to initiate payment' });
   }
 };

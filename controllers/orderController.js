@@ -1,56 +1,97 @@
 // controllers/orderController.js
 const { sql } = require('../db');
-const axios = require('axios');
+const { createDeliveryPaymentLink } = require('../utils/flutterwaveHelpers');
 
 exports.assignCourier = async (req, res) => {
   const adminId = req.user?.id;
   const { orderId } = req.params;
-  const { courier_id, pickup_address, dropoff_address } = req.body;
+  const { courierId, pickupAddress, dropoffAddress } = req.body;
 
-  if (!adminId) return res.status(401).json({ success: false, message: 'Unauthorized' });
-  if (!courier_id) return res.status(400).json({ success: false, message: 'Courier ID required' });
+  if (!adminId) 
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+    
+  if (!courierId) 
+    return res.status(400).json({ success: false, message: 'Courier ID required' });
 
   try {
+    // 1️⃣ Fetch the order
     const [order] = await sql`SELECT * FROM orders WHERE id = ${orderId}`;
-    if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
+    if (!order) 
+      return res.status(404).json({ success: false, message: 'Order not found' });
 
+    // 2️⃣ Update order with courier assignment
     const [updatedOrder] = await sql`
       UPDATE orders
-      SET courier_id = ${courier_id},
-          pickup_address = ${pickup_address},
-          delivery_address = ${dropoff_address},
-          status = 'pending_delivery_payment'
+      SET courier_id = ${courierId},
+          pickup_address = ${pickupAddress},
+          delivery_address = ${dropoffAddress},
+          status = 'pending'
       WHERE id = ${orderId}
-      RETURNING *;
+      RETURNING id, user_id, status, created_at, delivery_address, pickup_address, courier_id;
     `;
 
-    const amount = order.delivery_fee || 0;
-    const buyerEmail = order.buyer_email;
-    if (!buyerEmail) return res.status(400).json({ success: false, message: 'Buyer email missing' });
+    // 3️⃣ Prepare payment data for Flutterwave
+    const txRef = `delivery-${orderId}-${Date.now()}`;
+    const phoneNumber = order.phone_number.startsWith('0')
+      ? '+234' + order.phone_number.slice(1)
+      : order.phone_number;
 
-    const paymentRequest = await axios.post(
-      'https://api.flutterwave.com/v3/payments',
-      {
-        tx_ref: `DELIVERY-${orderId}-${Date.now()}`,
-        amount,
-        currency: 'NGN',
-        redirect_url: `https://oluwaflozoya.vercel.app/order/${orderId}/payment-callback`,
-        customer: { email: buyerEmail, phonenumber: order.buyer_phone, name: order.buyer_name },
-        payment_type: 'delivery',
+    const paymentData = {
+      amount: order.delivery_fee,
+      currency: 'NGN',
+      tx_ref: txRef,
+      redirect_url: `${process.env.FRONTEND_URL}/orders/${orderId}/payment-success`,
+      customer: {
+        email: order.email,
+        name: order.name,
+        phonenumber: phoneNumber,
       },
-      { headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`, 'Content-Type': 'application/json' } }
-    );
+      order_id: orderId,
+      user_id: order.user_id,
+    };
 
-    const paymentLink = paymentRequest.data.data.link;
+    // 4️⃣ Create delivery payment link
+    const response = await createDeliveryPaymentLink(paymentData);
+    const paymentLink = response.link;
 
+    // 5️⃣ Insert payment record into DB
     await sql`
-      INSERT INTO payments (order_id, user_id, amount, currency, status, payment_type, tx_ref, created_at)
-      VALUES (${orderId}, ${order.buyer_id}, ${amount}, 'NGN', 'pending', 'delivery', ${paymentRequest.data.data.tx_ref}, NOW())
+      INSERT INTO payments (
+        tx_ref,
+        payment_reference,
+        order_id,
+        user_id,
+        amount,
+        currency,
+        status,
+        payment_type,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        ${txRef},
+        ${response.id},
+        ${orderId},
+        ${order.user_id},
+        ${order.delivery_fee},
+        'NGN',
+        'pending',
+        'delivery',
+        NOW(),
+        NOW()
+      )
     `;
 
-    res.status(200).json({ success: true, message: 'Courier assigned and delivery payment created', order: updatedOrder, payment_link: paymentLink });
+    // 6️⃣ Return updated order + payment link
+    res.status(200).json({
+      success: true,
+      message: 'Courier assigned and delivery payment created',
+      order: updatedOrder,
+      paymentLink,
+    });
+
   } catch (err) {
-    console.error('❌ Error assigning courier:', err);
+    console.error('❌ Error assigning courier:', err.response?.data || err.message || err);
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
