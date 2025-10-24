@@ -5,9 +5,7 @@ const { createDeliveryPaymentLink } = require('../utils/flutterwaveHelpers');
 exports.assignCourier = async (req, res) => {
   const adminId = req.user?.id;
   const { orderId } = req.params;
-
-  // ✅ Match frontend naming (snake_case)
-  const { courier_id, pickup_address, dropoff_address } = req.body;
+  const { courier_id, pickup_address, dropoff_address, delivery_fee } = req.body; // ✅ include delivery_fee
 
   if (!adminId)
     return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -21,25 +19,35 @@ exports.assignCourier = async (req, res) => {
     if (!order)
       return res.status(404).json({ success: false, message: 'Order not found' });
 
-    // 2️⃣ Update order with courier assignment
+    // 2️⃣ Convert fee to number & validate
+    const amount = Number(delivery_fee);
+    if (!amount || amount < 1) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or missing delivery fee.',
+      });
+    }
+
+    // 3️⃣ Update order with courier and delivery info
     const [updatedOrder] = await sql`
       UPDATE orders
       SET courier_id = ${courier_id},
-          pickup_address = ${pickup_address},
-          delivery_address = ${dropoff_address},
+          pickup_address = ${pickup_address || order.pickup_address},
+          delivery_address = ${dropoff_address || order.delivery_address},
+          delivery_fee = ${amount},            -- ✅ store the new fee
           status = 'pending'
       WHERE id = ${orderId}
-      RETURNING id, user_id, status, created_at, delivery_address, pickup_address, courier_id;
+      RETURNING id, user_id, status, created_at, delivery_address, pickup_address, courier_id, delivery_fee;
     `;
 
-    // 3️⃣ Prepare payment data for Flutterwave
+    // 4️⃣ Prepare Flutterwave payment data
     const txRef = `delivery-${orderId}-${Date.now()}`;
     const phoneNumber = order.phone_number?.startsWith('0')
       ? '+234' + order.phone_number.slice(1)
       : order.phone_number;
 
     const paymentData = {
-      amount: order.delivery_fee,
+      amount: amount, // ✅ use validated number
       currency: 'NGN',
       tx_ref: txRef,
       redirect_url: `${process.env.FRONTEND_URL}/orders/${orderId}/payment-success`,
@@ -52,11 +60,15 @@ exports.assignCourier = async (req, res) => {
       user_id: order.user_id,
     };
 
-    // 4️⃣ Create delivery payment link
+    // 5️⃣ Create delivery payment link
     const response = await createDeliveryPaymentLink(paymentData);
+    if (!response?.link) {
+      throw new Error(response?.message || 'Failed to create payment link with Flutterwave');
+    }
+
     const paymentLink = response.link;
 
-    // 5️⃣ Insert payment record into DB
+    // 6️⃣ Insert payment record into DB
     await sql`
       INSERT INTO payments (
         tx_ref,
@@ -72,10 +84,10 @@ exports.assignCourier = async (req, res) => {
       )
       VALUES (
         ${txRef},
-        ${response.id},
+        ${response.id || null},
         ${orderId},
         ${order.user_id},
-        ${order.delivery_fee},
+        ${amount}, -- ✅ use correct fee here too
         'NGN',
         'pending',
         'delivery',
@@ -84,10 +96,10 @@ exports.assignCourier = async (req, res) => {
       )
     `;
 
-    // 6️⃣ Return updated order + payment link
+    // 7️⃣ Return success response
     res.status(200).json({
       success: true,
-      message: 'Courier assigned and delivery payment created',
+      message: 'Courier assigned and delivery payment created successfully.',
       order: updatedOrder,
       paymentLink,
     });
