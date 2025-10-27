@@ -3,58 +3,130 @@ const { sql } = require('../db');
 
 // STEP 1: Admin creates pending delivery and triggers buyer payment
 exports.createPendingDelivery = async (req, res) => {
-  try {
-    const { courier_id, order_id, pickup_address, dropoff_address, delivery_fee } = req.body;
-    const adminId = req.user.id; // from JWT
-
-    if (!courier_id || !order_id || !pickup_address || !dropoff_address || !delivery_fee) {
-      return res.status(400).json({ success: false, message: "Missing required fields." });
+    try {
+      const { courier_id, order_id, pickup_address, dropoff_address, delivery_fee } = req.body;
+      const adminId = req.user.id; // from JWT
+  
+      if (!courier_id || !order_id || !pickup_address || !dropoff_address || !delivery_fee) {
+        return res.status(400).json({ success: false, message: "Missing required fields." });
+      }
+  
+      // ✅ Check if order exists
+      const [order] = await sql`
+        SELECT id, user_id, status FROM orders WHERE id = ${order_id};
+      `;
+      if (!order) {
+        return res.status(404).json({ success: false, message: "Order not found." });
+      }
+  
+      // ✅ Check if delivery already pending
+      const existing = await sql`
+        SELECT id FROM deliveries WHERE order_id = ${order_id} AND status = 'pending';
+      `;
+      if (existing.length > 0) {
+        return res.status(400).json({ success: false, message: "Delivery already pending for this order." });
+      }
+  
+      // ✅ Create Flutterwave payment reference
+      const tx_ref = `DELIVERY-${order_id}-${Date.now()}`;
+  
+      // ✅ Generate payment link via Flutterwave
+      const fwPayload = {
+        tx_ref,
+        amount: delivery_fee,
+        currency: "NGN",
+        redirect_url: `${process.env.FRONTEND_URL}/payment-success`,
+        customer: {
+          id: order.user_id,
+          email: "buyer@email.com", // you can replace this dynamically later
+        },
+        meta: {
+          order_id,
+          courier_id,
+          type: "delivery_fee",
+        },
+      };
+  
+      const flwResponse = await flutterwave.createPaymentLink(fwPayload);
+  
+      if (!flwResponse || !flwResponse.data?.link) {
+        console.error("❌ Flutterwave link error:", flwResponse);
+        return res.status(500).json({
+          success: false,
+          message: "Failed to create delivery payment link.",
+        });
+      }
+  
+      const paymentLink = flwResponse.data.link;
+  
+      // ✅ Insert into deliveries table (pending)
+      const [delivery] = await sql`
+        INSERT INTO deliveries (
+          courier_id,
+          order_id,
+          pickup_address,
+          dropoff_address,
+          delivery_fee,
+          status,
+          created_by,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${courier_id},
+          ${order_id},
+          ${pickup_address},
+          ${dropoff_address},
+          ${delivery_fee},
+          'pending',
+          ${adminId},
+          NOW(),
+          NOW()
+        )
+        RETURNING id, order_id, courier_id, status;
+      `;
+  
+      // ✅ Log in payments table
+      await sql`
+        INSERT INTO payments (
+          order_id,
+          user_id,
+          amount,
+          status,
+          payment_reference,
+          tx_ref,
+          payment_method,
+          currency,
+          payment_type,
+          created_at
+        )
+        VALUES (
+          ${order_id},
+          ${order.user_id},
+          ${delivery_fee},
+          'pending',
+          ${paymentLink},
+          ${tx_ref},
+          'flutterwave',
+          'NGN',
+          'delivery_fee',
+          NOW()
+        );
+      `;
+  
+      // ✅ Respond to admin dashboard
+      res.json({
+        success: true,
+        message: "Delivery request created. Buyer notified to pay delivery fee.",
+        data: {
+          ...delivery,
+          payment_link: paymentLink,
+        },
+      });
+    } catch (err) {
+      console.error("❌ Error creating pending delivery:", err);
+      res.status(500).json({ success: false, message: "Failed to create pending delivery." });
     }
-
-    // ✅ Check if order already has a pending delivery
-    const existing = await sql`
-      SELECT id FROM deliveries WHERE order_id = ${order_id} AND status = 'pending';
-    `;
-    if (existing.length > 0) {
-      return res.status(400).json({ success: false, message: "Delivery already pending for this order." });
-    }
-
-    // ✅ Insert into deliveries table with pending status
-    const [delivery] = await sql`
-      INSERT INTO deliveries (
-        courier_id,
-        order_id,
-        pickup_address,
-        dropoff_address,
-        delivery_fee,
-        status,
-        created_by,
-        created_at,
-        updated_at
-      ) VALUES (
-        ${courier_id},
-        ${order_id},
-        ${pickup_address},
-        ${dropoff_address},
-        ${delivery_fee},
-        'pending',
-        ${adminId},
-        NOW(),
-        NOW()
-      )
-      RETURNING id, order_id, courier_id, status;
-    `;
-
-    res.json({
-      success: true,
-      message: "Delivery request created. Awaiting buyer payment.",
-      data: delivery
-    });
-  } catch (err) {
-    console.error("❌ Error creating pending delivery:", err.message);
-    res.status(500).json({ success: false, message: "Failed to create pending delivery." });
-  }
-};
+  };
 
 // In deliveryController.js
 exports.getPendingDeliveryByOrder = async (req, res) => {
