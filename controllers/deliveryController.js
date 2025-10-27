@@ -100,16 +100,28 @@ exports.createPendingDelivery = async (req, res) => {
   }
 };
 
-// In deliveryController.js
+// deliveryController.js
 exports.getPendingDeliveryByOrder = async (req, res) => {
     const { order_id } = req.params;
+  
     try {
       const [delivery] = await sql`
-        SELECT * FROM deliveries
-        WHERE order_id = ${order_id} AND status = 'pending'
+        SELECT 
+          d.*,
+          p.tx_ref,
+          p.amount AS payment_amount,
+          p.status AS payment_status
+        FROM deliveries d
+        LEFT JOIN payments p
+          ON p.order_id = d.order_id
+          AND p.tx_ref LIKE ${`DELIVERY-${order_id}%`}
+        WHERE d.order_id = ${order_id}
+          AND d.status = 'pending'
         LIMIT 1;
       `;
-      if (!delivery) return res.status(404).json({ success: false, message: 'No pending delivery found' });
+  
+      if (!delivery) 
+        return res.status(404).json({ success: false, message: 'No pending delivery found' });
   
       res.json({ success: true, delivery });
     } catch (err) {
@@ -117,6 +129,8 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
       res.status(500).json({ success: false, message: 'Server error' });
     }
   };
+  
+  
   
 
 // STEP 2: Finalize delivery after payment confirmation
