@@ -1,6 +1,81 @@
 // controllers/deliveryController.js
 const { sql } = require('../db');
 
+// STEP 1: Admin creates pending delivery and triggers buyer payment
+exports.createPendingDelivery = async (req, res) => {
+  try {
+    const { courier_id, order_id, pickup_address, dropoff_address, delivery_fee } = req.body;
+    const adminId = req.user.id; // from JWT
+
+    if (!courier_id || !order_id || !pickup_address || !dropoff_address || !delivery_fee) {
+      return res.status(400).json({ success: false, message: "Missing required fields." });
+    }
+
+    // ✅ Check if order already has a pending delivery
+    const existing = await sql`
+      SELECT id FROM deliveries WHERE order_id = ${order_id} AND status = 'pending';
+    `;
+    if (existing.length > 0) {
+      return res.status(400).json({ success: false, message: "Delivery already pending for this order." });
+    }
+
+    // ✅ Insert into deliveries table with pending status
+    const [delivery] = await sql`
+      INSERT INTO deliveries (
+        courier_id,
+        order_id,
+        pickup_address,
+        dropoff_address,
+        delivery_fee,
+        status,
+        created_by,
+        created_at,
+        updated_at
+      ) VALUES (
+        ${courier_id},
+        ${order_id},
+        ${pickup_address},
+        ${dropoff_address},
+        ${delivery_fee},
+        'pending',
+        ${adminId},
+        NOW(),
+        NOW()
+      )
+      RETURNING id, order_id, courier_id, status;
+    `;
+
+    res.json({
+      success: true,
+      message: "Delivery request created. Awaiting buyer payment.",
+      data: delivery
+    });
+  } catch (err) {
+    console.error("❌ Error creating pending delivery:", err.message);
+    res.status(500).json({ success: false, message: "Failed to create pending delivery." });
+  }
+};
+
+// In deliveryController.js
+exports.getPendingDeliveryByOrder = async (req, res) => {
+    const { order_id } = req.params;
+    try {
+      const [delivery] = await sql`
+        SELECT * FROM deliveries
+        WHERE order_id = ${order_id} AND status = 'pending'
+        LIMIT 1;
+      `;
+      if (!delivery) return res.status(404).json({ success: false, message: 'No pending delivery found' });
+  
+      res.json({ success: true, delivery });
+    } catch (err) {
+      console.error('❌ Error fetching pending delivery:', err);
+      res.status(500).json({ success: false, message: 'Server error' });
+    }
+  };
+  
+
+// STEP 2: Finalize delivery after payment confirmation
 exports.finalizeDeliveryAfterPayment = async (req, res) => {
   const { order_id, courier_id } = req.body;
 
@@ -23,7 +98,6 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Order not found' });
     }
 
-    // Ensure delivery fee payment is confirmed
     if (order.status !== 'delivery_paid') {
       return res.status(400).json({
         success: false,
@@ -50,30 +124,16 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Courier is currently offline' });
     }
 
-    // 3️⃣ Create a delivery record linked to order
+    // 3️⃣ Update existing delivery to “assigned”
     const [delivery] = await sql`
-      INSERT INTO deliveries (
-        order_id,
-        courier_id,
-        pickup_address,
-        dropoff_address,
-        delivery_fee,
-        status,
-        assigned_at
-      )
-      VALUES (
-        ${order_id},
-        ${courier_id},
-        ${order.pickup_address || 'Unknown pickup'},
-        ${order.delivery_address || 'Unknown dropoff'},
-        ${order.delivery_fee || 0},
-        'assigned',
-        NOW()
-      )
+      UPDATE deliveries
+      SET status = 'assigned',
+          updated_at = NOW()
+      WHERE order_id = ${order_id} AND courier_id = ${courier_id}
       RETURNING *;
     `;
 
-    // 4️⃣ Update order to reflect courier assignment
+    // 4️⃣ Update order
     await sql`
       UPDATE orders
       SET status = 'courier_assigned',
@@ -89,7 +149,6 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
       WHERE id = ${courier_id};
     `;
 
-    // 6️⃣ Return success
     res.status(200).json({
       success: true,
       message: 'Courier assigned successfully after delivery fee payment.',
