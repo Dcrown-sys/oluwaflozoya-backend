@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
+const axios = require('axios');
+
 
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
+const FLW_SECRET_KEY = process.env.FLW_SECRET_KEY || 'FLWSECK-0b62e2fdee10788400a7d23a93cfb26d-19a076840e3vt-X';
 
 // Socket.IO instance (to emit notifications)
 let ioInstance;
@@ -121,4 +124,37 @@ async function createNotification(userId, message) {
   }
 }
 
-module.exports = router;
+async function createPaymentLink(payload) {
+  // This function calls Flutterwave to create a payment (link/checkout)
+  // Keep payload structure flexible (cart endpoint already uses similar).
+  try {
+    const resp = await axios.post(
+      'https://api.flutterwave.com/v3/payments', // works for inline payments; if you use Payment Links endpoint, replace URL accordingly
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${FLW_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
+
+    // Flutterwave responses differ by endpoint. Try common locations for link:
+    // - resp.data.data.link  (used by some endpoints)
+    // - resp.data.link       (occasionally)
+    // return the whole resp.data so controllers can inspect.
+    return resp.data;
+  } catch (err) {
+    console.error('❌ Flutterwave API error:', err.response?.data || err.message);
+    throw err;
+  }
+}
+
+
+module.exports = {
+  router,
+  setSocketIO,
+  createPaymentLink,
+};
+
