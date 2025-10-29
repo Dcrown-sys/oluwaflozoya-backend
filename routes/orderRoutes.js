@@ -1,10 +1,13 @@
 // routes/ordersRouter.js
 const express = require('express');
 const router = express.Router();
-const { assignCourier } = require('../controllers/orderController'); // ✅ destructure, not require the whole object
+const { assignCourier, getOrderDetails } = require('../controllers/orderController');
+const { verifyAdmin } = require('../middleware/auth'); // optional
 
-const { verifyAdmin } = require('../middleware/auth'); // if you have auth
+// Assign courier (admin)
+router.post('/:orderId/assign', verifyAdmin, assignCourier);
 
-router.post('/:orderId/assign', verifyAdmin, assignCourier); // ✅ this MUST be a function
+// Get order details
+router.get('/:order_id/details', getOrderDetails);
 
 module.exports = router;

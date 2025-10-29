@@ -93,3 +93,83 @@ exports.assignCourier = async (req, res) => {
     });
   }
 };
+
+
+// ✅ GET ORDER DETAILS (shows courier + delivery info)
+exports.getOrderDetails = async (req, res) => {
+    const { order_id } = req.params;
+  
+    if (!order_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'order_id is required',
+      });
+    }
+  
+    try {
+      // 1️⃣ Fetch order info
+      const [order] = await sql`
+        SELECT 
+          o.id,
+          o.user_id,
+          o.status AS order_status,
+          o.total_amount,
+          o.pickup_address AS order_pickup_address,
+          o.delivery_address AS order_delivery_address,
+          o.delivery_fee,
+          o.created_at,
+          o.updated_at
+        FROM orders o
+        WHERE o.id = ${order_id}
+        LIMIT 1;
+      `;
+  
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found',
+        });
+      }
+  
+      // 2️⃣ Fetch delivery info
+      const [delivery] = await sql`
+        SELECT *
+        FROM deliveries
+        WHERE order_id = ${order_id}
+        LIMIT 1;
+      `;
+  
+      let courierInfo = null;
+  
+      // 3️⃣ Only include courier info if delivery fee is paid
+      if (delivery && delivery.status !== 'pending') {
+        const [courier] = await sql`
+          SELECT id, full_name, phone, vehicle_type, vehicle_plate
+          FROM couriers
+          WHERE id = ${delivery.courier_id}
+          LIMIT 1;
+        `;
+        if (courier) {
+          courierInfo = courier;
+        }
+      }
+  
+      res.json({
+        success: true,
+        message: 'Order details retrieved successfully',
+        order: {
+          ...order,
+          delivery: delivery || null,
+          courier: courierInfo, // null if delivery not paid/assigned
+        },
+      });
+    } catch (err) {
+      console.error('❌ Error fetching order details:', err);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error fetching order details',
+      });
+    }
+  };
+  
+  

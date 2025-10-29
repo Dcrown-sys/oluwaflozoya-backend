@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
-const { finalizeDeliveryAfterPayment } = require('../controllers/deliveryController'); // ✅ import this
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
 
 let ioInstance;
@@ -13,7 +12,7 @@ router.post(
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
-      // 1️⃣ Verify signature
+      // 1️⃣ Verify Flutterwave signature
       const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
       if (!signature || signature !== FLW_SECRET_HASH) {
         console.warn('⚠️ Invalid Flutterwave webhook signature');
@@ -41,7 +40,7 @@ router.post(
             currency = ${data.currency},
             updated_at = NOW()
         WHERE tx_ref = ${txRef}
-        RETURNING id, user_id, order_id, payment_reference, payment_type;
+        RETURNING id, user_id, order_id, payment_reference, payment_type, meta;
       `;
 
       if (!updatedPayments || updatedPayments.length === 0) {
@@ -50,7 +49,7 @@ router.post(
       }
 
       const payment = updatedPayments[0];
-      const { user_id: userId, order_id: orderId, payment_type: paymentType } = payment;
+      const { user_id: userId, order_id: orderId, payment_type: paymentType, meta } = payment;
 
       // 4️⃣ Update order status
       let orderStatus = 'pending';
@@ -71,13 +70,36 @@ router.post(
         `;
       }
 
-      // 5️⃣ Automatically finalize courier assignment if delivery paid
+      // 5️⃣ Automatically assign courier for delivery if payment completed
       if (paymentType === 'delivery' && paymentStatus === 'completed') {
         console.log(`🚚 Delivery payment confirmed for order ${orderId}`);
+
         try {
-          await finalizeDeliveryAfterPayment(orderId);
+          // Fetch the pending delivery for this order
+          const [pendingDelivery] = await sql`
+            SELECT * FROM deliveries
+            WHERE order_id = ${orderId} AND status = 'pending'
+            LIMIT 1;
+          `;
+
+          if (pendingDelivery) {
+            // Assign courier
+            await sql`
+              UPDATE deliveries
+              SET status = 'assigned', updated_at = NOW()
+              WHERE id = ${pendingDelivery.id};
+            `;
+            await sql`
+              UPDATE orders
+              SET status = 'courier_assigned', courier_id = ${pendingDelivery.courier_id}, updated_at = NOW()
+              WHERE id = ${orderId};
+            `;
+            console.log(`✅ Courier ${pendingDelivery.courier_id} assigned for order ${orderId}`);
+          } else {
+            console.warn(`⚠️ No pending delivery found for order ${orderId}`);
+          }
         } catch (err) {
-          console.error('❌ Failed to finalize delivery after payment:', err);
+          console.error('❌ Failed to auto-assign courier:', err);
         }
       }
 

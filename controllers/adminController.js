@@ -1360,91 +1360,7 @@ console.log({
   };
   
   
-  
-// controllers/adminController.js
-// exports.getAllOrdersAdmin = async (req, res) => {
-//     try {
-//       // Fetch orders with buyer info and order items
-//       const rows = await sql`
-//         SELECT 
-//           o.id AS order_id,
-//           o.status,
-//           o.created_at,
-//           o.total_amount,
-//           o.delivery_address,
-//           o.phone_number,
-//           o.payment_reference,
-//           u.id AS user_id,
-//           u.full_name AS user_name,
-//           u.email AS user_email,
-//           u.phone AS user_phone,
-//           o.courier_id,
-//           o.courier_name,
-//           o.courier_phone,
-//           oi.id AS order_item_id,
-//           oi.product_id,
-//           oi.quantity,
-//           oi.unit_price,
-//           oi.total_price,
-//           p.name AS product_name
-//         FROM orders o
-//         JOIN users u ON o.user_id = u.id
-//         LEFT JOIN order_items oi ON o.id = oi.order_id
-//         LEFT JOIN products p ON oi.product_id = p.id
-//         ORDER BY o.created_at DESC;
-//       `;
-  
-//       const ordersMap = new Map();
-  
-//       for (const row of rows) {
-//         const orderId = row.order_id;
-  
-//         if (!ordersMap.has(orderId)) {
-//           ordersMap.set(orderId, {
-//             id: orderId,
-//             status: row.status,
-//             created_at: row.created_at,
-//             total_amount: row.total_amount,
-//             delivery_address: row.delivery_address,
-//             phone_number: row.phone_number,
-//             payment_reference: row.payment_reference,
-//             user: {
-//               id: row.user_id,
-//               name: row.user_name,
-//               email: row.user_email,
-//               phone: row.user_phone,
-//             },
-//             // Only include courier info if courier_id exists (assigned)
-//             courier: row.courier_id
-//               ? {
-//                   id: row.courier_id,
-//                   name: row.courier_name,
-//                   phone: row.courier_phone,
-//                 }
-//               : null,
-//             items: [],
-//           });
-//         }
-  
-//         if (row.order_item_id) {
-//           ordersMap.get(orderId).items.push({
-//             id: row.order_item_id,
-//             product_id: row.product_id,
-//             product_name: row.product_name,
-//             quantity: row.quantity,
-//             unit_price: row.unit_price,
-//             total_price: row.total_price,
-//           });
-//         }
-//       }
-  
-//       res.json({ orders: Array.from(ordersMap.values()) });
-//     } catch (err) {
-//       console.error('getAllOrdersAdmin error', err);
-//       res.status(500).json({ message: 'Failed to fetch orders' });
-//     }
-//   };
-  
+
   
   
   
@@ -2276,20 +2192,6 @@ exports.saveFcmToken = async (req, res) => {
     }
   };
   
-//   exports.assignCourier = async (req, res) => {
-//     const { deliveryId, courierId } = req.body;
-//     try {
-//       await sql`
-//         UPDATE deliveries
-//         SET courier_id = ${courierId}, status = 'en_route'
-//         WHERE id = ${deliveryId}
-//       `;
-//       res.json({ success: true, message: 'Courier assigned successfully' });
-//     } catch (err) {
-//       console.error(err);
-//       res.status(500).json({ error: 'Error assigning courier' });
-//     }
-//   };
 
 
 

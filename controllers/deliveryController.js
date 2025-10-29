@@ -15,21 +15,17 @@ exports.createPendingDelivery = async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing required fields." });
     }
 
-    // ✅ Check if order exists
     const [order] = await sql`SELECT id, user_id, status FROM orders WHERE id = ${order_id};`;
     if (!order) return res.status(404).json({ success: false, message: "Order not found." });
 
-    // ✅ Prevent duplicate pending delivery
     const existing = await sql`
       SELECT id FROM deliveries WHERE order_id = ${order_id} AND status = 'pending';
     `;
     if (existing.length > 0)
       return res.status(400).json({ success: false, message: "Delivery already pending for this order." });
 
-    // ✅ Generate tx_ref
     const tx_ref = `DELIVERY-${order_id}-${Date.now()}`;
 
-    // ✅ Create delivery
     const [delivery] = await sql`
       INSERT INTO deliveries (
         courier_id, order_id, pickup_address, dropoff_address, delivery_fee,
@@ -42,7 +38,6 @@ exports.createPendingDelivery = async (req, res) => {
       RETURNING id, order_id, courier_id, status;
     `;
 
-    // ✅ Create pending payment entry
     await sql`
       INSERT INTO payments (
         order_id, user_id, amount, status, payment_reference, tx_ref,
@@ -70,7 +65,6 @@ exports.createPendingDelivery = async (req, res) => {
  */
 exports.getPendingDeliveryByOrder = async (req, res) => {
   const { order_id } = req.params;
-
   try {
     const [delivery] = await sql`
       SELECT 
@@ -95,7 +89,7 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
 };
 
 /**
- * STEP 2: Buyer initiates payment for the pending delivery (reuses cart structure)
+ * STEP 2: Buyer initiates payment for the pending delivery
  */
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
@@ -103,7 +97,6 @@ exports.initiateDeliveryPayment = async (req, res) => {
     if (!order_id)
       return res.status(400).json({ success: false, message: 'order_id is required' });
 
-    // ✅ Fetch delivery
     const [delivery] = await sql`
       SELECT id AS delivery_id, delivery_fee
       FROM deliveries
@@ -116,7 +109,6 @@ exports.initiateDeliveryPayment = async (req, res) => {
     const { delivery_id, delivery_fee } = delivery;
     const amount = Number(delivery_fee);
 
-    // ✅ Use existing tx_ref if available
     const [payment] = await sql`
       SELECT tx_ref FROM payments
       WHERE order_id = ${order_id} AND payment_type = 'delivery_fee'
@@ -139,7 +131,6 @@ exports.initiateDeliveryPayment = async (req, res) => {
       `;
     }
 
-    // ✅ Payload matches cart structure
     const fwPayload = {
       tx_ref,
       amount,
@@ -156,9 +147,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
       },
     };
 
-    // ✅ Generate payment link
     const fwResponse = await flutterwave.createPaymentLink(fwPayload);
-
     const paymentLink =
       fwResponse?.data?.link ||
       fwResponse?.link ||
@@ -170,7 +159,6 @@ exports.initiateDeliveryPayment = async (req, res) => {
       return res.status(500).json({ success: false, message: 'Failed to get payment link from Flutterwave' });
     }
 
-    // ✅ Update payment reference
     await sql`
       UPDATE payments
       SET payment_reference = ${paymentLink}, updated_at = NOW()
@@ -190,31 +178,23 @@ exports.initiateDeliveryPayment = async (req, res) => {
 };
 
 /**
- * STEP 3: Finalize after successful payment
+ * STEP 3: Manual (admin) finalization after payment
  */
 exports.finalizeDeliveryAfterPayment = async (req, res) => {
   const { order_id, courier_id } = req.body;
-
-  if (!order_id || !courier_id) {
-    return res.status(400).json({
-      success: false,
-      message: 'order_id and courier_id are required',
-    });
-  }
+  if (!order_id || !courier_id)
+    return res.status(400).json({ success: false, message: 'order_id and courier_id are required' });
 
   try {
-    // ✅ Confirm order and paid status
     const [order] = await sql`
       SELECT id, status, user_id, delivery_address, pickup_address, delivery_fee
       FROM orders
       WHERE id = ${order_id};
     `;
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
-
     if (order.status !== 'delivery_paid')
       return res.status(400).json({ success: false, message: 'Delivery fee not paid yet' });
 
-    // ✅ Confirm courier availability
     const [courier] = await sql`
       SELECT id, full_name, phone, vehicle_type, vehicle_plate, verification_status, availability
       FROM couriers
@@ -226,7 +206,6 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
     if (courier.availability === 'Offline')
       return res.status(400).json({ success: false, message: 'Courier is currently offline' });
 
-    // ✅ Update delivery + order + courier
     const [delivery] = await sql`
       UPDATE deliveries
       SET status = 'assigned', updated_at = NOW()
@@ -239,7 +218,6 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
       SET status = 'courier_assigned', courier_id = ${courier_id}, updated_at = NOW()
       WHERE id = ${order_id};
     `;
-
     await sql`UPDATE couriers SET availability = 'Busy' WHERE id = ${courier_id};`;
 
     res.json({
@@ -254,3 +232,46 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
+/**
+ * ✅ PRIVATE HELPER — called by webhook automatically
+ */
+exports.finalizeDeliveryAfterPaymentAuto = async (order_id) => {
+    try {
+      const [order] = await sql`
+        SELECT id, status FROM orders WHERE id = ${order_id};
+      `;
+      if (!order) return console.warn(`⚠️ Order ${order_id} not found`);
+      if (order.status !== 'delivery_paid') return console.warn(`⚠️ Order ${order_id} not marked as delivery_paid yet`);
+  
+      // 🔹 Get the pending delivery row for this order
+      const [delivery] = await sql`
+        SELECT * FROM deliveries
+        WHERE order_id = ${order_id} AND status = 'pending'
+        LIMIT 1;
+      `;
+      if (!delivery) return console.warn(`⚠️ No pending delivery found for order ${order_id}`);
+  
+      // 🔹 Assign the courier
+      await sql`
+        UPDATE deliveries
+        SET status = 'assigned', courier_id = ${delivery.courier_id}, updated_at = NOW()
+        WHERE id = ${delivery.id};
+      `;
+      await sql`
+        UPDATE orders
+        SET status = 'courier_assigned', courier_id = ${delivery.courier_id}, updated_at = NOW()
+        WHERE id = ${order_id};
+      `;
+      await sql`
+        UPDATE couriers
+        SET availability = 'Busy', updated_at = NOW()
+        WHERE id = ${delivery.courier_id};
+      `;
+  
+      console.log(`✅ Courier ${delivery.courier_id} finalized for order ${order_id}`);
+    } catch (err) {
+      console.error('❌ Error in finalizeDeliveryAfterPaymentAuto:', err);
+    }
+  };
+  
