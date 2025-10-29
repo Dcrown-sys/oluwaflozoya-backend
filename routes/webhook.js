@@ -1,10 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
+
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
 
 let ioInstance;
-function setSocketIO(io) { ioInstance = io; }
+function setSocketIO(io) {
+  ioInstance = io;
+}
 exports.setSocketIO = setSocketIO;
 
 router.post(
@@ -27,12 +30,14 @@ router.post(
 
       const txRef = data.tx_ref;
       const fwStatus = (data.status || '').toLowerCase();
+
+      // 3️⃣ Determine payment status
       let paymentStatus = 'pending';
       if (['successful', 'completed'].includes(fwStatus)) paymentStatus = 'completed';
       else if (['failed', 'cancelled'].includes(fwStatus)) paymentStatus = 'cancelled';
       else if (fwStatus === 'pending') paymentStatus = 'pending';
 
-      // 3️⃣ Update payments table
+      // 4️⃣ Update payments table
       const updatedPayments = await sql`
         UPDATE payments
         SET status = ${paymentStatus},
@@ -49,9 +54,9 @@ router.post(
       }
 
       const payment = updatedPayments[0];
-      const { user_id: userId, order_id: orderId, payment_type: paymentType, meta } = payment;
+      const { user_id: userId, order_id: orderId, payment_type: paymentType } = payment;
 
-      // 4️⃣ Update order status
+      // 5️⃣ Determine new order status
       let orderStatus = 'pending';
       if (paymentType === 'order') {
         if (paymentStatus === 'completed') orderStatus = 'paid';
@@ -62,20 +67,38 @@ router.post(
         else if (paymentStatus === 'pending') orderStatus = 'delivery_pending';
       }
 
+      // 6️⃣ Handle cancelled payments (CLEANUP)
       if (orderId) {
-        await sql`
-          UPDATE orders
-          SET status = ${orderStatus}, updated_at = NOW()
-          WHERE id = ${orderId};
-        `;
+        if (paymentStatus === 'cancelled') {
+          console.log(`🗑️ Payment cancelled — cleaning up order ${orderId} and related data`);
+
+          // Delete related deliveries first
+          await sql`DELETE FROM deliveries WHERE order_id = ${orderId};`;
+
+          // Delete related cart items (if any)
+          await sql`DELETE FROM cart_items WHERE order_id = ${orderId};`;
+
+          // Delete the order itself
+          await sql`DELETE FROM orders WHERE id = ${orderId};`;
+
+          // Optionally delete the payment record itself
+          // await sql`DELETE FROM payments WHERE order_id = ${orderId};`;
+
+        } else {
+          // Normal flow — update order status
+          await sql`
+            UPDATE orders
+            SET status = ${orderStatus}, updated_at = NOW()
+            WHERE id = ${orderId};
+          `;
+        }
       }
 
-      // 5️⃣ Automatically assign courier for delivery if payment completed
+      // 7️⃣ Automatically assign courier after successful delivery payment
       if (paymentType === 'delivery' && paymentStatus === 'completed') {
         console.log(`🚚 Delivery payment confirmed for order ${orderId}`);
 
         try {
-          // Fetch the pending delivery for this order
           const [pendingDelivery] = await sql`
             SELECT * FROM deliveries
             WHERE order_id = ${orderId} AND status = 'pending'
@@ -83,17 +106,20 @@ router.post(
           `;
 
           if (pendingDelivery) {
-            // Assign courier
             await sql`
               UPDATE deliveries
               SET status = 'assigned', updated_at = NOW()
               WHERE id = ${pendingDelivery.id};
             `;
+
             await sql`
               UPDATE orders
-              SET status = 'courier_assigned', courier_id = ${pendingDelivery.courier_id}, updated_at = NOW()
+              SET status = 'courier_assigned',
+                  courier_id = ${pendingDelivery.courier_id},
+                  updated_at = NOW()
               WHERE id = ${orderId};
             `;
+
             console.log(`✅ Courier ${pendingDelivery.courier_id} assigned for order ${orderId}`);
           } else {
             console.warn(`⚠️ No pending delivery found for order ${orderId}`);
@@ -103,9 +129,10 @@ router.post(
         }
       }
 
-      // 6️⃣ Notify user
+      // 8️⃣ Notify user
       if (userId && ioInstance) {
         let message = '';
+
         if (paymentType === 'order') {
           if (paymentStatus === 'completed')
             message = `🎉 Your order payment (ref: ${txRef}) was successful!`;
@@ -132,7 +159,7 @@ router.post(
   }
 );
 
-// Helper: create notification
+// 🔔 Helper: create notification
 async function createNotification(userId, message) {
   try {
     const inserted = await sql`
