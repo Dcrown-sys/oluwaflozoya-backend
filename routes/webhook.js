@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
+const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryController');
 
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
 
@@ -10,6 +11,7 @@ function setSocketIO(io) {
 }
 exports.setSocketIO = setSocketIO;
 
+// ✅ Main webhook route
 router.post(
   '/flutterwave-webhook',
   express.raw({ type: 'application/json' }),
@@ -25,124 +27,78 @@ router.post(
       // 2️⃣ Parse payload
       const payload = JSON.parse(req.body.toString());
       const { event, data } = payload;
-      if (!event || !data || !data.tx_ref)
+      if (!event || !data || !data.tx_ref) {
+        console.warn('⚠️ Invalid payload received:', payload);
         return res.status(400).send('Invalid payload');
+      }
 
       const txRef = data.tx_ref;
       const fwStatus = (data.status || '').toLowerCase();
+      console.log(`💳 Received Flutterwave webhook for tx_ref: ${txRef}, status: ${fwStatus}`);
 
       // 3️⃣ Determine payment status
       let paymentStatus = 'pending';
       if (['successful', 'completed'].includes(fwStatus)) paymentStatus = 'completed';
       else if (['failed', 'cancelled'].includes(fwStatus)) paymentStatus = 'cancelled';
-      else if (fwStatus === 'pending') paymentStatus = 'pending';
 
-      // 4️⃣ Update payments table
+      // 4️⃣ Update payments (check both tx_ref & payment_reference)
       const updatedPayments = await sql`
-  UPDATE payments
-  SET status = ${paymentStatus},
-      amount = ${data.amount},
-      currency = ${data.currency},
-      updated_at = NOW()
-  WHERE payment_reference = ${txRef}
-  RETURNING id, user_id, order_id, payment_reference, payment_type, meta;
-`;
+        UPDATE payments
+        SET 
+          status = ${paymentStatus},
+          amount = ${data.amount || 0},
+          currency = ${data.currency || 'NGN'},
+          updated_at = NOW()
+        WHERE tx_ref = ${txRef} OR payment_reference = ${txRef}
+        RETURNING id, user_id, order_id, payment_reference, tx_ref, payment_type;
+      `;
 
-if (!updatedPayments || updatedPayments.length === 0) {
-  console.warn(`⚠️ Payment not found for payment_reference: ${txRef}`);
-  return res.status(404).send('Payment not found');
-}
-
+      if (!updatedPayments || updatedPayments.length === 0) {
+        console.warn(`⚠️ Payment with tx_ref or reference ${txRef} not found`);
+        return res.status(404).send('Payment not found');
+      }
 
       const payment = updatedPayments[0];
       const { user_id: userId, order_id: orderId, payment_type: paymentType } = payment;
 
-      // 5️⃣ Determine new order status
+      // 5️⃣ Update order status based on payment type
       let orderStatus = 'pending';
       if (paymentType === 'order') {
         if (paymentStatus === 'completed') orderStatus = 'paid';
         else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
-      } else if (paymentType === 'delivery') {
+      } else if (['delivery', 'delivery_fee'].includes(paymentType)) {
         if (paymentStatus === 'completed') orderStatus = 'delivery_paid';
         else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
-        else if (paymentStatus === 'pending') orderStatus = 'delivery_pending';
       }
 
-      // 6️⃣ Handle cancelled payments (CLEANUP)
+      // 6️⃣ Update order record
       if (orderId) {
-        if (paymentStatus === 'cancelled') {
-          console.log(`🗑️ Payment cancelled — cleaning up order ${orderId} and related data`);
-
-          // Delete related deliveries first
-          await sql`DELETE FROM deliveries WHERE order_id = ${orderId};`;
-
-          // Delete related cart items (if any)
-          await sql`DELETE FROM cart_items WHERE order_id = ${orderId};`;
-
-          // Delete the order itself
-          await sql`DELETE FROM orders WHERE id = ${orderId};`;
-
-          // Optionally delete the payment record itself
-          // await sql`DELETE FROM payments WHERE order_id = ${orderId};`;
-
-        } else {
-          // Normal flow — update order status
-          await sql`
-            UPDATE orders
-            SET status = ${orderStatus}, updated_at = NOW()
-            WHERE id = ${orderId};
-          `;
-        }
+        await sql`
+          UPDATE orders
+          SET status = ${orderStatus}, updated_at = NOW()
+          WHERE id = ${orderId};
+        `;
+        console.log(`🧾 Order ${orderId} status updated to ${orderStatus}`);
       }
 
-      // 7️⃣ Automatically assign courier after successful delivery payment
-      if (['delivery', 'delivery_fee'].includes(paymentType) && paymentStatus === 'completed')        {
-        console.log(`🚚 Delivery payment confirmed for order ${orderId}`);
-
-        try {
-          const [pendingDelivery] = await sql`
-            SELECT * FROM deliveries
-            WHERE order_id = ${orderId} AND status = 'pending'
-            LIMIT 1;
-          `;
-
-          if (pendingDelivery) {
-            await sql`
-              UPDATE deliveries
-              SET status = 'assigned', updated_at = NOW()
-              WHERE id = ${pendingDelivery.id};
-            `;
-
-            await sql`
-              UPDATE orders
-              SET status = 'courier_assigned',
-                  courier_id = ${pendingDelivery.courier_id},
-                  updated_at = NOW()
-              WHERE id = ${orderId};
-            `;
-
-            console.log(`✅ Courier ${pendingDelivery.courier_id} assigned for order ${orderId}`);
-          } else {
-            console.warn(`⚠️ No pending delivery found for order ${orderId}`);
-          }
-        } catch (err) {
-          console.error('❌ Failed to auto-assign courier:', err);
-        }
+      // 7️⃣ Auto-assign courier if delivery fee is completed
+      if (['delivery', 'delivery_fee'].includes(paymentType) && paymentStatus === 'completed') {
+        console.log(`🚚 Delivery fee confirmed for order ${orderId}, finalizing courier assignment...`);
+        await finalizeDeliveryAfterPaymentAuto(orderId);
       }
 
-      // 8️⃣ Notify user
+      // 8️⃣ Notify user (via socket + notification table)
       if (userId && ioInstance) {
         let message = '';
-
         if (paymentType === 'order') {
           if (paymentStatus === 'completed')
             message = `🎉 Your order payment (ref: ${txRef}) was successful!`;
           else if (paymentStatus === 'cancelled')
             message = `⚠️ Your order payment (ref: ${txRef}) was cancelled.`;
           else message = `ℹ️ Your order payment (ref: ${txRef}) is ${paymentStatus}.`;
-        } else if (paymentType === 'delivery') {
+        } else if (['delivery', 'delivery_fee'].includes(paymentType)) {
           if (paymentStatus === 'completed')
-            message = `🚚 Delivery fee (ref: ${txRef}) was paid successfully! Your courier is being assigned now.`;
+            message = `🚚 Delivery fee (ref: ${txRef}) paid successfully! Courier assignment in progress.`;
           else if (paymentStatus === 'cancelled')
             message = `⚠️ Delivery payment (ref: ${txRef}) was cancelled.`;
           else message = `ℹ️ Your delivery payment (ref: ${txRef}) is ${paymentStatus}.`;
