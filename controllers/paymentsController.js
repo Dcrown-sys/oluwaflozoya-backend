@@ -32,7 +32,7 @@ exports.payOrderDelivery = async (req, res) => {
       amount: order.delivery_fee,
       currency: 'NGN',
       tx_ref: txRef,
-      redirect_url: `${process.env.FRONTEND_URL}/orders/${orderId}/payment-success`,
+      redirect_url: `oluwoflomobile://payment-success?status=completed&ref=${txRef}`,
       customer: {
         email: user.email,
         name: user.name,

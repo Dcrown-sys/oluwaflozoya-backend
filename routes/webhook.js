@@ -39,19 +39,20 @@ router.post(
 
       // 4️⃣ Update payments table
       const updatedPayments = await sql`
-        UPDATE payments
-        SET status = ${paymentStatus},
-            amount = ${data.amount},
-            currency = ${data.currency},
-            updated_at = NOW()
-        WHERE tx_ref = ${txRef}
-        RETURNING id, user_id, order_id, payment_reference, payment_type, meta;
-      `;
+  UPDATE payments
+  SET status = ${paymentStatus},
+      amount = ${data.amount},
+      currency = ${data.currency},
+      updated_at = NOW()
+  WHERE payment_reference = ${txRef}
+  RETURNING id, user_id, order_id, payment_reference, payment_type, meta;
+`;
 
-      if (!updatedPayments || updatedPayments.length === 0) {
-        console.warn(`⚠️ Payment not found for tx_ref: ${txRef}`);
-        return res.status(404).send('Payment not found');
-      }
+if (!updatedPayments || updatedPayments.length === 0) {
+  console.warn(`⚠️ Payment not found for payment_reference: ${txRef}`);
+  return res.status(404).send('Payment not found');
+}
+
 
       const payment = updatedPayments[0];
       const { user_id: userId, order_id: orderId, payment_type: paymentType } = payment;
@@ -95,7 +96,7 @@ router.post(
       }
 
       // 7️⃣ Automatically assign courier after successful delivery payment
-      if (paymentType === 'delivery' && paymentStatus === 'completed') {
+      if (['delivery', 'delivery_fee'].includes(paymentType) && paymentStatus === 'completed')        {
         console.log(`🚚 Delivery payment confirmed for order ${orderId}`);
 
         try {
