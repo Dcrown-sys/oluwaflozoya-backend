@@ -233,29 +233,39 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
   }
 };
 
-/**
- * ✅ PRIVATE HELPER — called by webhook automatically
- */
 exports.finalizeDeliveryAfterPaymentAuto = async (order_id) => {
     try {
+      // 1️⃣ Check if the order exists and confirm payment status
       const [order] = await sql`
         SELECT id, status FROM orders WHERE id = ${order_id};
       `;
       if (!order) return console.warn(`⚠️ Order ${order_id} not found`);
-      if (order.status !== 'delivery_paid') return console.warn(`⚠️ Order ${order_id} not marked as delivery_paid yet`);
   
-      // 🔹 Get the pending delivery row for this order
+      // Allow both "delivery_paid" and already "paid" states (in case webhook timing)
+      if (!['delivery_paid', 'paid'].includes(order.status)) {
+        console.warn(`⚠️ Order ${order_id} not yet marked as paid (current: ${order.status})`);
+        // Don’t exit immediately — continue check below just in case payment was updated but not order
+      }
+  
+      // 2️⃣ Find the pending delivery record for that order
       const [delivery] = await sql`
         SELECT * FROM deliveries
-        WHERE order_id = ${order_id} AND status = 'pending'
+        WHERE order_id = ${order_id}
+        ORDER BY created_at DESC
         LIMIT 1;
       `;
-      if (!delivery) return console.warn(`⚠️ No pending delivery found for order ${order_id}`);
+      if (!delivery) return console.warn(`⚠️ No delivery record found for order ${order_id}`);
   
-      // 🔹 Assign the courier
+      // Skip if already assigned
+      if (delivery.status === 'assigned') {
+        console.log(`ℹ️ Delivery for order ${order_id} already assigned`);
+        return;
+      }
+  
+      // 3️⃣ Assign courier automatically
       await sql`
         UPDATE deliveries
-        SET status = 'assigned', courier_id = ${delivery.courier_id}, updated_at = NOW()
+        SET status = 'assigned', assigned_at = NOW(), updated_at = NOW()
         WHERE id = ${delivery.id};
       `;
       await sql`
@@ -269,7 +279,7 @@ exports.finalizeDeliveryAfterPaymentAuto = async (order_id) => {
         WHERE id = ${delivery.courier_id};
       `;
   
-      console.log(`✅ Courier ${delivery.courier_id} finalized for order ${order_id}`);
+      console.log(`✅ Courier ${delivery.courier_id} successfully auto-assigned for order ${order_id}`);
     } catch (err) {
       console.error('❌ Error in finalizeDeliveryAfterPaymentAuto:', err);
     }
