@@ -25,20 +25,21 @@ exports.assignCourier = async (req, res) => {
 
     // 3️⃣ Create Flutterwave payment link for delivery fee
     const fwPayload = {
-      tx_ref,
-      amount: delivery_fee,
-      currency: 'NGN',
-      redirect_url: `${process.env.FRONTEND_URL}/payment-success`,
-      customer: {
-        id: order.user_id,
-        email: 'buyer@email.com', // 🔁 Replace with actual user email
-      },
-      meta: {
-        order_id,
-        courier_id,
-        type: 'delivery',
-      },
-    };
+        tx_ref,
+        amount: delivery_fee,
+        currency: 'NGN',
+        redirect_url: `${process.env.FRONTEND_URL}/payment-success`,
+        customer: {
+          id: order.user_id,
+          email: 'buyer@email.com', // Replace with actual user email
+        },
+        meta: {
+          order_id,
+          courier_id, // 👈 include selected courier
+          type: 'delivery',
+        },
+      };
+      
 
     const flwResponse = await flutterwave.createPaymentLink(fwPayload);
 

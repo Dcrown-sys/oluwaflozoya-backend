@@ -200,7 +200,9 @@ app.post('/api/admin/flutterwave-webhook', async (req, res) => {
 });
 
 // Webhook test route
-app.use('/api/webhook', require('./routes/webhook'));
+// ======== FLUTTERWAVE WEBHOOK ========
+app.use('/api/payment', paymentsRoutes);
+
 
 // Health check
 app.get('/', (req, res) => res.send('🚀 Oluwaflo backend is running!'));

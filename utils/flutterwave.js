@@ -1,3 +1,4 @@
+// controllers/paymentWebhook.js
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
@@ -12,6 +13,7 @@ function setSocketIO(io) {
 }
 exports.setSocketIO = setSocketIO;
 
+// ✅ FLUTTERWAVE WEBHOOK HANDLER
 router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     // 1️⃣ Verify Flutterwave signature
@@ -74,7 +76,7 @@ router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), a
         WHERE id = ${payment.order_id}
       `;
     } else {
-      // 🚚 Delivery payment
+      // 🚚 Delivery payment logic
       const deliveryStatus = paymentStatus === 'completed' ? 'delivery_paid' : paymentStatus;
       await sql`
         UPDATE orders
@@ -85,27 +87,57 @@ router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), a
       if (paymentStatus === 'completed') {
         console.log('✅ Delivery fee payment completed — assigning courier...');
 
-        // 7️⃣ Find delivery record tied to the order
+        // Find delivery record tied to the order
         const deliveries = await sql`
           SELECT * FROM deliveries WHERE order_id = ${payment.order_id} LIMIT 1
         `;
+
         if (deliveries.length > 0) {
           const delivery = deliveries[0];
+
           if (delivery.courier_id) {
-            // Assign courier officially
+            // ✅ Assign courier officially
             await sql`
               UPDATE deliveries
               SET status = 'assigned', updated_at = NOW()
               WHERE id = ${delivery.id}
             `;
+
             await sql`
               UPDATE couriers
               SET is_assigned = true, updated_at = NOW()
               WHERE id = ${delivery.courier_id}
             `;
+
             console.log(`🚀 Courier ${delivery.courier_id} assigned to order ${payment.order_id}`);
+
+            // 🔔 Notify both buyer and courier
+            await createNotification(
+              payment.user_id,
+              `🎉 Delivery fee payment successful! Your courier is now assigned and will contact you soon.`
+            );
+            await createNotification(
+              delivery.courier_id,
+              `🚚 You’ve been assigned to deliver order ${payment.order_id}. Please proceed to pickup.`
+            );
+
+            // 🔌 Emit socket updates if connected
+            if (ioInstance) {
+              ioInstance.to(`user_${payment.user_id}`).emit('orderUpdated', {
+                order_id: payment.order_id,
+                status: 'delivery_paid',
+              });
+              ioInstance.to(`courier_${delivery.courier_id}`).emit('newAssignment', {
+                delivery_id: delivery.id,
+                order_id: payment.order_id,
+              });
+            }
           } else {
-            console.warn(`⚠️ No courier found for delivery order ${payment.order_id}`);
+            console.warn(`⚠️ No courier_id found for delivery order ${payment.order_id}`);
+            await createNotification(
+              payment.user_id,
+              `✅ Delivery fee received. Waiting to assign a courier for your order.`
+            );
           }
         } else {
           console.warn(`⚠️ No delivery record found for order ${payment.order_id}`);
@@ -113,7 +145,7 @@ router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), a
       }
     }
 
-    // 8️⃣ Notify user
+    // 8️⃣ Notify user (generic payment update)
     if (payment.user_id && ioInstance) {
       let message = '';
       if (paymentStatus === 'completed') {
@@ -126,7 +158,7 @@ router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), a
         message = `ℹ️ Your payment (ref: ${txRef}) is pending.`;
       }
       await createNotification(payment.user_id, message);
-      console.log(`🔔 Notification sent to user ${payment.user_id}: ${message}`);
+      console.log(`🔔 Payment notification sent for user ${payment.user_id}: ${message}`);
     }
 
     res.status(200).send('Webhook processed successfully');
@@ -136,7 +168,7 @@ router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), a
   }
 });
 
-// Helper: Notification creator
+// ✅ Helper: Create Notification (buyer or courier)
 async function createNotification(userId, message) {
   try {
     const inserted = await sql`
@@ -153,6 +185,7 @@ async function createNotification(userId, message) {
   }
 }
 
+// ✅ Helper: Create Payment Link
 async function createPaymentLink(payload) {
   try {
     const resp = await axios.post(

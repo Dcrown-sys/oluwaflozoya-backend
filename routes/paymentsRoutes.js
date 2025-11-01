@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { payOrderDelivery } = require('../controllers/paymentsController');
+const { payOrderDelivery, verifyFlutterwaveWebhook } = require('../controllers/paymentsController');
 const { verifyBuyer } = require('../middleware/auth');
-const { sql } = require('../db'); // needed for the new GET route
+const { sql } = require('../db'); // needed for the GET route
 
 // 🟢 Buyer creates a new delivery payment (Flutterwave link)
 router.post('/order/:orderId', verifyBuyer, payOrderDelivery);
@@ -23,7 +23,7 @@ router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
       FROM payments
       WHERE order_id = ${order_id} 
         AND user_id = ${user_id}
-        AND payment_type = 'delivery'
+        AND payment_type = 'delivery_fee'
       LIMIT 1;
     `;
 
@@ -37,5 +37,8 @@ router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
     res.status(500).json({ success: false, message: 'Error fetching delivery payment' });
   }
 });
+
+// ✅ Flutterwave webhook route (public, no auth)
+router.post('/flutterwave-webhook', verifyFlutterwaveWebhook);
 
 module.exports = router;

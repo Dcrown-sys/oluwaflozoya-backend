@@ -233,55 +233,62 @@ exports.finalizeDeliveryAfterPayment = async (req, res) => {
   }
 };
 
-exports.finalizeDeliveryAfterPaymentAuto = async (order_id) => {
+exports.finalizeDeliveryAfterPaymentAuto = async (orderId) => {
     try {
-      // 1️⃣ Check if the order exists and confirm payment status
-      const [order] = await sql`
-        SELECT id, status FROM orders WHERE id = ${order_id};
-      `;
-      if (!order) return console.warn(`⚠️ Order ${order_id} not found`);
+      console.log(`🚀 [finalizeDeliveryAfterPaymentAuto] Starting for order ${orderId}`);
   
-      // Allow both "delivery_paid" and already "paid" states (in case webhook timing)
-      if (!['delivery_paid', 'paid'].includes(order.status)) {
-        console.warn(`⚠️ Order ${order_id} not yet marked as paid (current: ${order.status})`);
-        // Don’t exit immediately — continue check below just in case payment was updated but not order
-      }
-  
-      // 2️⃣ Find the pending delivery record for that order
-      const [delivery] = await sql`
-        SELECT * FROM deliveries
-        WHERE order_id = ${order_id}
-        ORDER BY created_at DESC
-        LIMIT 1;
-      `;
-      if (!delivery) return console.warn(`⚠️ No delivery record found for order ${order_id}`);
-  
-      // Skip if already assigned
-      if (delivery.status === 'assigned') {
-        console.log(`ℹ️ Delivery for order ${order_id} already assigned`);
+      if (!orderId) {
+        console.warn('⚠️ No order ID provided to finalize delivery');
         return;
       }
   
-      // 3️⃣ Assign courier automatically
-      await sql`
-        UPDATE deliveries
-        SET status = 'assigned', assigned_at = NOW(), updated_at = NOW()
-        WHERE id = ${delivery.id};
-      `;
-      await sql`
-        UPDATE orders
-        SET status = 'courier_assigned', courier_id = ${delivery.courier_id}, updated_at = NOW()
-        WHERE id = ${order_id};
-      `;
-      await sql`
-        UPDATE couriers
-        SET availability = 'Busy', updated_at = NOW()
-        WHERE id = ${delivery.courier_id};
+      // 1️⃣ Get the order and confirm delivery_fee is paid
+      const [order] = await sql`
+        SELECT id, user_id, courier_id, status 
+        FROM orders 
+        WHERE id = ${orderId} 
+        LIMIT 1;
       `;
   
-      console.log(`✅ Courier ${delivery.courier_id} successfully auto-assigned for order ${order_id}`);
+      if (!order) {
+        console.warn(`⚠️ Order ${orderId} not found`);
+        return;
+      }
+  
+      // 2️⃣ Find available courier if not assigned yet
+      let courierId = order.courier_id;
+      if (!courierId) {
+        const [courier] = await sql`
+          SELECT id 
+          FROM couriers 
+          WHERE status = 'available' 
+          ORDER BY RANDOM() 
+          LIMIT 1;
+        `;
+        if (courier) courierId = courier.id;
+      }
+  
+      if (!courierId) {
+        console.warn(`⚠️ No available courier found for order ${orderId}`);
+        return;
+      }
+  
+     // 3️⃣ Assign courier + update order
+await sql`
+UPDATE orders 
+SET courier_id = ${courierId}, status = 'en_route', updated_at = NOW()
+WHERE id = ${orderId};
+`;
+
+// 4️⃣ Create delivery record
+await sql`
+INSERT INTO deliveries (order_id, courier_id, status, created_at)
+VALUES (${orderId}, ${courierId}, 'en_route', NOW());
+`;
+
+  
+      console.log(`✅ [finalizeDeliveryAfterPaymentAuto] Courier ${courierId} auto-assigned for order ${orderId}`);
     } catch (err) {
-      console.error('❌ Error in finalizeDeliveryAfterPaymentAuto:', err);
+      console.error('❌ finalizeDeliveryAfterPaymentAuto error:', err);
     }
   };
-  
