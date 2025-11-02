@@ -97,6 +97,7 @@ exports.assignCourier = async (req, res) => {
 
 
 // ✅ GET ORDER DETAILS (shows courier + delivery info)
+// ✅ GET ORDER DETAILS (shows courier info as soon as assigned)
 exports.getOrderDetails = async (req, res) => {
     const { order_id } = req.params;
   
@@ -142,17 +143,15 @@ exports.getOrderDetails = async (req, res) => {
   
       let courierInfo = null;
   
-      // 3️⃣ Only include courier info if delivery fee is paid
-      if (delivery && delivery.status !== 'pending') {
+      // 🧩 Show courier info as soon as courier_id exists
+      if (delivery && delivery.courier_id) {
         const [courier] = await sql`
           SELECT id, full_name, phone, vehicle_type, vehicle_plate
           FROM couriers
           WHERE id = ${delivery.courier_id}
           LIMIT 1;
         `;
-        if (courier) {
-          courierInfo = courier;
-        }
+        courierInfo = courier || null;
       }
   
       res.json({
@@ -161,7 +160,7 @@ exports.getOrderDetails = async (req, res) => {
         order: {
           ...order,
           delivery: delivery || null,
-          courier: courierInfo, // null if delivery not paid/assigned
+          courier: courierInfo,
         },
       });
     } catch (err) {
@@ -172,5 +171,4 @@ exports.getOrderDetails = async (req, res) => {
       });
     }
   };
-  
   

@@ -5,7 +5,7 @@ const { sql } = require('../db');
 // ================= PAY DELIVERY FEE =================
 exports.payOrderDelivery = async (req, res) => {
   try {
-    const { orderId, courierId } = req.body; // admin-selected courier
+    const { orderId, courierUserId } = req.body; // 🟢 frontend sends courier.user_id
     const userId = req.user.id; // from JWT middleware
 
     // 1️⃣ Fetch the order
@@ -14,18 +14,26 @@ exports.payOrderDelivery = async (req, res) => {
     `;
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    // 2️⃣ Fetch user info
+    // 2️⃣ Get courier record using courier.user_id
+    const [courier] = await sql`
+      SELECT id, full_name, phone FROM couriers WHERE user_id = ${courierUserId};
+    `;
+    if (!courier) return res.status(404).json({ message: 'Courier not found' });
+
+    const courierId = courier.id; // 🟢 actual courier ID (UUID)
+
+    // 3️⃣ Fetch user info
     const [user] = await sql`
       SELECT name, email, phone_number FROM users WHERE id = ${userId};
     `;
     if (!user) return res.status(404).json({ message: 'User not found' });
 
-    // 3️⃣ Format phone number
+    // 4️⃣ Format phone number
     const phoneNumber = user.phone_number.startsWith('0')
       ? '+234' + user.phone_number.slice(1)
       : user.phone_number;
 
-    // 4️⃣ Build Flutterwave payment payload
+    // 5️⃣ Build Flutterwave payment payload
     const txRef = `DELIVERY-${orderId}-${Date.now()}`;
     const paymentData = {
       tx_ref: txRef,
@@ -40,18 +48,18 @@ exports.payOrderDelivery = async (req, res) => {
       meta: {
         order_id: orderId,
         user_id: userId,
-        courier_id: courierId,        // 👈 include selected courier
+        courier_id: courierId, // 🟢 proper courier.id, not user_id
         payment_type: 'delivery_fee',
       },
       customizations: {
-        title: 'Oluwaflo Delivery Fee',
+        title: 'Zoya Delivery Fee',
         description: 'Payment for order delivery',
       },
     };
 
     console.log('🚀 Flutterwave Payload:', paymentData);
 
-    // 5️⃣ Create payment link
+    // 6️⃣ Create payment link
     const response = await createDeliveryPaymentLink(paymentData);
 
     if (!response?.link) {
@@ -59,7 +67,7 @@ exports.payOrderDelivery = async (req, res) => {
       return res.status(500).json({ message: 'Failed to create payment link' });
     }
 
-    // 6️⃣ Save pending payment including courier_id
+    // 7️⃣ Save pending payment
     await sql`
       INSERT INTO payments (
         tx_ref, payment_reference, order_id, user_id, courier_id,
@@ -97,7 +105,6 @@ exports.verifyFlutterwaveWebhook = async (req, res) => {
 
     const { tx_ref, status, id: flw_ref, meta } = data;
 
-    // Only handle delivery fee payments
     if (status === 'successful' && meta?.payment_type === 'delivery_fee') {
       const orderId = meta.order_id;
       const userId = meta.user_id;
@@ -112,23 +119,27 @@ exports.verifyFlutterwaveWebhook = async (req, res) => {
         WHERE tx_ref = ${tx_ref};
       `;
 
-      // 2️⃣ Assign courier automatically
-      if (courierId) {
-        // Update orders table
+      // 2️⃣ Ensure courier and order exist before updating
+      const [courier] = await sql`SELECT id FROM couriers WHERE id = ${courierId}`;
+      const [order] = await sql`SELECT id FROM orders WHERE id = ${orderId}`;
+
+      if (courier && order) {
         await sql`
           UPDATE orders
           SET courier_id = ${courierId}, status = 'assigned', updated_at = NOW()
           WHERE id = ${orderId};
         `;
 
-        // Insert into deliveries table
         await sql`
           INSERT INTO deliveries (order_id, courier_id, status, created_at)
           VALUES (${orderId}, ${courierId}, 'assigned', NOW());
         `;
+
+        console.log(`✅ Courier ${courierId} auto-assigned for order ${orderId}`);
+      } else {
+        console.warn('⚠️ Skipped assignment: courier or order not found');
       }
 
-      console.log(`✅ Auto-assigned courier ${courierId} for order ${orderId}`);
       return res.status(200).json({ success: true, message: 'Courier auto-assigned successfully' });
     }
 
