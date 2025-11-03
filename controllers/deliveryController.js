@@ -135,7 +135,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
       tx_ref,
       amount,
       currency: 'NGN',
-      redirect_url: `${process.env.FRONTEND_URL || process.env.BASE_URL}/payment-success`,
+      redirect_url: `${process.env.BASE_URL}/api/delivery/payment/callback`,
       customer: {
         email: req.user?.email || 'zoyaprocurementcompany@gmail.com',
         name: req.user?.name || 'Oluwaflo Buyer',
@@ -292,3 +292,70 @@ VALUES (${orderId}, ${courierId}, 'en_route', NOW());
       console.error('❌ finalizeDeliveryAfterPaymentAuto error:', err);
     }
   };
+
+
+  /**
+ * STEP 4: Flutterwave payment verification callback (auto finalize)
+ */
+exports.flutterwavePaymentCallback = async (req, res) => {
+    try {
+      const { transaction_id } = req.query;
+  
+      if (!transaction_id) {
+        return res.status(400).send('Missing transaction_id');
+      }
+  
+      console.log('🔄 Verifying Flutterwave payment:', transaction_id);
+  
+      const axios = require('axios');
+      const verifyRes = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+          },
+        }
+      );
+  
+      const verification = verifyRes.data?.data;
+      if (!verification) {
+        console.error('❌ Invalid verification response:', verifyRes.data);
+        return res.status(400).send('Invalid verification');
+      }
+  
+      const { status, meta, tx_ref } = verification;
+  
+      if (status === 'successful' && meta?.order_id) {
+        const orderId = meta.order_id;
+  
+        console.log(`✅ Payment verified for order ${orderId}, updating status...`);
+  
+        // Mark payment as completed
+        await sql`
+          UPDATE payments
+          SET status = 'completed', updated_at = NOW()
+          WHERE tx_ref = ${tx_ref};
+        `;
+  
+        // Mark order as delivery paid
+        await sql`
+          UPDATE orders
+          SET status = 'delivery_paid', updated_at = NOW()
+          WHERE id = ${orderId};
+        `;
+  
+        // Auto finalize (assign courier etc.)
+        const { finalizeDeliveryAfterPaymentAuto } = require('./deliveryController');
+        await finalizeDeliveryAfterPaymentAuto(orderId);
+  
+        return res.status(200).send('Payment successful and delivery finalized!');
+      }
+  
+      console.warn(`⚠️ Payment not successful or missing order_id in meta`);
+      return res.status(400).send('Payment failed or invalid metadata');
+    } catch (err) {
+      console.error('❌ Flutterwave payment callback error:', err.message);
+      res.status(500).send('Internal server error during Flutterwave callback');
+    }
+  };
+  
