@@ -1,11 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { payOrderDelivery, verifyFlutterwaveWebhook } = require('../controllers/paymentsController');
+const {
+  payOrderDelivery,
+  verifyFlutterwaveWebhook,
+  verifyPayment, // ✅ add this
+} = require('../controllers/paymentsController'); // make sure this file exports verifyPayment
 const { verifyBuyer } = require('../middleware/auth');
-const { sql } = require('../db'); // needed for the GET route
+const { sql } = require('../db');
 
-// 🟢 Buyer creates a new delivery payment (Flutterwave link)
+// 🟢 Buyer initiates a new delivery payment (Flutterwave link)
 router.post('/order/:orderId', verifyBuyer, payOrderDelivery);
+
+// 🟢 Verify payment after Flutterwave redirects (for in-app deep link)
+router.get('/verify/:ref', verifyPayment); // ✅ fixed reference
 
 // 🟡 Buyer fetches existing delivery payment info
 router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
@@ -28,13 +35,17 @@ router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
     `;
 
     if (!payment) {
-      return res.status(404).json({ success: false, message: 'No delivery payment found for this order' });
+      return res
+        .status(404)
+        .json({ success: false, message: 'No delivery payment found for this order' });
     }
 
     res.json({ success: true, ...payment });
   } catch (err) {
     console.error('❌ Error fetching delivery payment:', err);
-    res.status(500).json({ success: false, message: 'Error fetching delivery payment' });
+    res
+      .status(500)
+      .json({ success: false, message: 'Error fetching delivery payment' });
   }
 });
 

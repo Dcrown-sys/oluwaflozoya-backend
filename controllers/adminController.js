@@ -1787,13 +1787,13 @@ exports.getCategories = async (req, res) => {
     try {
       const {
         user_id,
-        order_id, // optional for delivery payments
-        items, // only for order payments
+        order_id,
+        items,
         email,
         name,
         phone,
-        delivery_address, // only for order payments
-        payment_type = 'order', // 'order' or 'delivery'
+        delivery_address,
+        payment_type = 'order',
       } = req.body;
   
       if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
@@ -1808,13 +1808,12 @@ exports.getCategories = async (req, res) => {
       let order;
   
       // -----------------------
-      // 🛒 1️⃣ Handle order payments
+      // 🛒 Handle ORDER payments
       // -----------------------
       if (payment_type === 'order') {
-        if (!items || items.length === 0) {
+        if (!items?.length) {
           return res.status(400).json({ error: 'Items are required for order payment' });
         }
-  
         if (!delivery_address) {
           return res.status(400).json({ error: 'Delivery address required' });
         }
@@ -1826,13 +1825,12 @@ exports.getCategories = async (req, res) => {
             RETURNING id
           `;
   
-          // Calculate subtotal
           let subtotal = 0;
           for (const item of items) {
             const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
             if (!product) throw new Error(`Product not found: ${item.product_id}`);
   
-            const itemTotal = product.price * item.quantity;
+            const itemTotal = Number(product.price) * Number(item.quantity);
             subtotal += itemTotal;
   
             await tx`
@@ -1841,20 +1839,17 @@ exports.getCategories = async (req, res) => {
             `;
           }
   
-          // Add 3% VAT + 3% Service Fee
           const vat = subtotal * 0.03;
           const serviceFee = subtotal * 0.03;
           const total = subtotal + vat + serviceFee;
           totalAmount = total;
   
-          // Update total amount
           await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.id}`;
-  
           return { id: newOrder.id };
         });
   
         // -----------------------
-        // 🚚 2️⃣ Handle delivery payments
+        // 🚚 Handle DELIVERY payments
         // -----------------------
       } else if (payment_type === 'delivery') {
         if (!order_id) {
@@ -1865,51 +1860,60 @@ exports.getCategories = async (req, res) => {
         if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
   
         order = { id: order_id };
-        totalAmount = existingOrder.delivery_fee;
+        totalAmount = Number(existingOrder.delivery_fee);
       }
   
       // -----------------------
-      // 🔖 3️⃣ Generate tx_ref
+      // 🔖 Generate tx_ref
       // -----------------------
       const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
   
       // -----------------------
-      // 💰 4️⃣ Create Flutterwave Payment Link
+      // 💰 Flutterwave Payment Link
       // -----------------------
-      const fwRes = await axios.post(
-        'https://api.flutterwave.com/v3/payments',
-        {
-          tx_ref,
-          amount: totalAmount.toFixed(2),
-          currency: 'NGN',
-          redirect_url: `${process.env.FRONTEND_URL}/payment-success?order_id=${order.id}&payment_type=${payment_type}`,
-          customer: {
-            email: email || 'zoyaprocurementcompany@gmail.com',
-            name: name || 'Valued Customer',
-            phonenumber: phone || '08063203385',
-          },
-          customizations: {
-            title: payment_type === 'order' ? 'Zoya Order Payment' : 'Zoya Delivery Payment',
-            description:
-              payment_type === 'order'
-                ? `Payment for order ${order.id} (VAT + Service Fee included)`
-                : `Delivery fee for order ${order.id}`,
-          },
+      const redirectUrl =
+        process.env.FRONTEND_URL
+          ? `${process.env.FRONTEND_URL}/payment-success?order_id=${order.id}&payment_type=${payment_type}`
+          : `https://oluwaflo.vercel.app/payment-success?order_id=${order.id}&payment_type=${payment_type}`;
+  
+      const payload = {
+        tx_ref,
+        amount: Number(totalAmount.toFixed(2)),
+        currency: 'NGN',
+        redirect_url: redirectUrl,
+        customer: {
+          email: email || 'zoyaprocurementcompany@gmail.com',
+          name: name || 'Valued Customer',
+          phonenumber: phone || '08000000000',
         },
-        {
-          headers: {
-            Authorization: `Bearer ${FLW_SECRET_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
+        customizations: {
+          title: payment_type === 'order' ? 'Zoya Order Payment' : 'Zoya Delivery Payment',
+          description:
+            payment_type === 'order'
+              ? `Payment for order ${order.id} (VAT + Service Fee included)`
+              : `Delivery fee for order ${order.id}`,
+        },
+      };
+  
+      console.log('🟢 [createPaymentLink] Flutterwave Payload:', payload);
+  
+      const fwRes = await axios.post('https://api.flutterwave.com/v3/payments', payload, {
+        headers: {
+          Authorization: `Bearer ${FLW_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
   
       if (!fwRes.data || fwRes.data.status !== 'success') {
-        return res.status(500).json({ error: 'Failed to create payment link' });
+        console.error('❌ Flutterwave rejected:', fwRes.data);
+        return res.status(400).json({
+          error: fwRes.data?.message || 'Failed to create payment link',
+          details: fwRes.data,
+        });
       }
   
       // -----------------------
-      // 💾 5️⃣ Save payment record
+      // 💾 Save payment record
       // -----------------------
       await sql`
         INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
@@ -1917,7 +1921,7 @@ exports.getCategories = async (req, res) => {
       `;
   
       // -----------------------
-      // ✅ 6️⃣ Return response
+      // ✅ Response
       // -----------------------
       return res.status(200).json({
         success: true,
@@ -1928,12 +1932,14 @@ exports.getCategories = async (req, res) => {
         total_amount: totalAmount,
       });
     } catch (err) {
-      console.error('❌ createPaymentLink error:', {
+      console.error('❌ createPaymentLink error (deep):', {
         message: err.message,
         data: err.response?.data,
         stack: err.stack,
       });
-      return res.status(500).json({ error: 'Internal server error' });
+      return res.status(500).json({
+        error: err.response?.data?.message || err.message || 'Internal server error',
+      });
     }
   };
   

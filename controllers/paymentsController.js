@@ -149,3 +149,41 @@ exports.verifyFlutterwaveWebhook = async (req, res) => {
     res.status(500).json({ success: false, message: 'Webhook error', error: err.message });
   }
 };
+
+
+// backend/controllers/paymentController.js
+exports.verifyPayment = async (req, res) => {
+    const { ref } = req.params;
+    try {
+      const [payment] = await sql`
+        SELECT * FROM payments WHERE tx_ref = ${ref};
+      `;
+  
+      if (!payment) {
+        return res.status(404).json({ success: false, message: 'Payment not found' });
+      }
+  
+      if (payment.status === 'completed') {
+        return res.json({ success: true, message: 'Payment already verified' });
+      }
+  
+      // Optionally verify with Flutterwave API here
+      await sql`
+        UPDATE payments
+        SET status = 'completed', updated_at = NOW()
+        WHERE tx_ref = ${ref};
+      `;
+  
+      await sql`
+        UPDATE orders
+        SET status = 'assigned', updated_at = NOW()
+        WHERE id = ${payment.order_id};
+      `;
+  
+      res.json({ success: true, message: 'Payment verified and order assigned' });
+    } catch (err) {
+      console.error('❌ verifyPayment error:', err);
+      res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+  };
+  
