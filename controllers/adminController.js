@@ -3103,47 +3103,47 @@ exports.searchProducts = async (req, res) => {
 
 
   // ✅ Confirm payment and update order status after Flutterwave callback
-exports.confirmPayment = async (req, res) => {
-  const { tx_ref } = req.body;
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!tx_ref) {
-    return res.status(400).json({ message: 'Transaction reference missing' });
-  }
+// exports.confirmPayment = async (req, res) => {
+//   const { tx_ref } = req.body;
+//   const token = req.headers.authorization?.split(' ')[1];
+//   if (!tx_ref) {
+//     return res.status(400).json({ message: 'Transaction reference missing' });
+//   }
 
-  try {
-    // Verify payment on Flutterwave
-    const verifyRes = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`, {
-      headers: {
-        Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-      },
-    });
+//   try {
+//     // Verify payment on Flutterwave
+//     const verifyRes = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`, {
+//       headers: {
+//         Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+//       },
+//     });
 
-    const data = await verifyRes.json();
+//     const data = await verifyRes.json();
 
-    if (!data?.data || data.data.status !== 'successful') {
-      return res.status(400).json({ message: 'Payment not successful or invalid reference' });
-    }
+//     if (!data?.data || data.data.status !== 'successful') {
+//       return res.status(400).json({ message: 'Payment not successful or invalid reference' });
+//     }
 
-    // ✅ Update the order in DB
-    await prisma.orders.updateMany({
-      where: { tx_ref },
-      data: {
-        payment_status: 'paid',
-        order_status: 'pending_assignment', // waiting for courier
-        updated_at: new Date(),
-      },
-    });
+//     // ✅ Update the order in DB
+//     await prisma.orders.updateMany({
+//       where: { tx_ref },
+//       data: {
+//         payment_status: 'paid',
+//         order_status: 'pending_assignment', // waiting for courier
+//         updated_at: new Date(),
+//       },
+//     });
 
     // ✅ Optionally, auto-assign courier if you want immediate dispatch
     // const order = await prisma.orders.findFirst({ where: { tx_ref } });
     // if (order) await assignCourierAutomatically(order);
 
-    return res.json({ message: 'Payment verified and order updated successfully' });
-  } catch (error) {
-    console.error('❌ confirmPayment error:', error);
-    return res.status(500).json({ message: 'Error verifying payment', error: error.message });
-  }
-};
+//     return res.json({ message: 'Payment verified and order updated successfully' });
+//   } catch (error) {
+//     console.error('❌ confirmPayment error:', error);
+//     return res.status(500).json({ message: 'Error verifying payment', error: error.message });
+//   }
+// };
 
 
   

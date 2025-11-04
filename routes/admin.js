@@ -82,7 +82,7 @@ router.get('/producer/:producerId/products', adminController.getProductsByProduc
 // ============================
 router.post('/initiatePayment', adminController.initiatePayment);
 router.get('/verifyPayment', adminController.verifyPayment);
-router.post('/buyer/confirm-payment', adminController.confirmPayment);
+// router.post('/buyer/confirm-payment', adminController.confirmPayment);
 router.post('/buyer/create-payment-link', adminController.createPaymentLink);
 router.get('/payment-success', (req, res) => {
   res.send(`
