@@ -110,94 +110,94 @@ io.on('connection', (socket) => {
 });
 
 // ======== FLUTTERWAVE WEBHOOK ========
-app.post('/api/admin/flutterwave-webhook', async (req, res) => {
-  const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
-  const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
+// app.post('/api/admin/flutterwave-webhook', async (req, res) => {
+//   const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
+//   const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
 
-  if (!signature || signature !== FLW_SECRET_HASH) {
-    console.warn('⚠️ Invalid Flutterwave signature');
-    return res.status(401).send('⚠️ Invalid Flutterwave signature');
-  }
+//   if (!signature || signature !== FLW_SECRET_HASH) {
+//     console.warn('⚠️ Invalid Flutterwave signature');
+//     return res.status(401).send('⚠️ Invalid Flutterwave signature');
+//   }
 
-  try {
-    const payload = JSON.parse(req.body.toString());
-    console.log('✅ Flutterwave webhook received:', payload);
+//   try {
+//     const payload = JSON.parse(req.body.toString());
+//     console.log('✅ Flutterwave webhook received:', payload);
 
-    const { event, data } = payload;
-    if (!event || !data || !data.tx_ref) return res.status(400).send('Invalid payload');
+//     const { event, data } = payload;
+//     if (!event || !data || !data.tx_ref) return res.status(400).send('Invalid payload');
 
-    const txRef = data.tx_ref;
-    const fwStatus = (data.status || '').toLowerCase();
+//     const txRef = data.tx_ref;
+//     const fwStatus = (data.status || '').toLowerCase();
 
-    // Map Flutterwave status to DB status
-    let paymentStatus = 'pending';
-    if (['successful', 'completed'].includes(fwStatus)) paymentStatus = 'completed';
-    else if (['failed', 'cancelled'].includes(fwStatus)) paymentStatus = 'cancelled';
-    else if (fwStatus === 'pending') paymentStatus = 'pending';
+//     // Map Flutterwave status to DB status
+//     let paymentStatus = 'pending';
+//     if (['successful', 'completed'].includes(fwStatus)) paymentStatus = 'completed';
+//     else if (['failed', 'cancelled'].includes(fwStatus)) paymentStatus = 'cancelled';
+//     else if (fwStatus === 'pending') paymentStatus = 'pending';
 
-    // Update payment
-    const updatedPayments = await sql`
-      UPDATE payments
-      SET status = ${paymentStatus}, amount = ${data.amount}, currency = ${data.currency}, updated_at = NOW()
-      WHERE tx_ref = ${txRef}
-      RETURNING id, user_id, payment_reference, payment_type
+//     // Update payment
+//     const updatedPayments = await sql`
+//       UPDATE payments
+//       SET status = ${paymentStatus}, amount = ${data.amount}, currency = ${data.currency}, updated_at = NOW()
+//       WHERE tx_ref = ${txRef}
+//       RETURNING id, user_id, payment_reference, payment_type
 
-    `;
+//     `;
 
-    if (!updatedPayments.length) {
-      console.warn(`⚠️ Payment with tx_ref ${txRef} not found`);
-      return res.status(404).send('Payment not found');
-    }
+//     if (!updatedPayments.length) {
+//       console.warn(`⚠️ Payment with tx_ref ${txRef} not found`);
+//       return res.status(404).send('Payment not found');
+//     }
 
-    const { user_id: userId, payment_reference: paymentReference, payment_type: paymentType } = updatedPayments[0];
+//     const { user_id: userId, payment_reference: paymentReference, payment_type: paymentType } = updatedPayments[0];
 
 
-    // Update corresponding order status
-    let orderStatus = 'pending';
-    if (paymentType === 'order') {
-      if (paymentStatus === 'completed') orderStatus = 'paid';
-      else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
-    } else if (paymentType === 'delivery') {
-      if (paymentStatus === 'completed') orderStatus = 'delivery_paid';
-      else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
-    }
+//     // Update corresponding order status
+//     let orderStatus = 'pending';
+//     if (paymentType === 'order') {
+//       if (paymentStatus === 'completed') orderStatus = 'paid';
+//       else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
+//     } else if (paymentType === 'delivery') {
+//       if (paymentStatus === 'completed') orderStatus = 'delivery_paid';
+//       else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
+//     }
 
-    if (paymentReference) {
-      await sql`
-        UPDATE orders
-        SET status = ${orderStatus}, updated_at = NOW()
-        WHERE payment_reference = ${paymentReference}
-      `;
-    }
+//     if (paymentReference) {
+//       await sql`
+//         UPDATE orders
+//         SET status = ${orderStatus}, updated_at = NOW()
+//         WHERE payment_reference = ${paymentReference}
+//       `;
+//     }
 
-    // Send notification
-    if (userId && io) {
-      let message = '';
-      if (paymentType === 'order') {
-        if (paymentStatus === 'completed') message = `🎉 Your order payment (ref: ${txRef}) was successful!`;
-        else if (paymentStatus === 'cancelled') message = `⚠️ Your order payment (ref: ${txRef}) was cancelled.`;
-        else message = `ℹ️ Your order payment (ref: ${txRef}) is ${paymentStatus}.`;
-      } else if (paymentType === 'delivery') {
-        if (paymentStatus === 'completed') message = `🚚 Delivery fee (ref: ${txRef}) was paid successfully!`;
-        else if (paymentStatus === 'cancelled') message = `⚠️ Delivery payment (ref: ${txRef}) was cancelled.`;
-        else message = `ℹ️ Your delivery payment (ref: ${txRef}) is ${paymentStatus}.`;
-      }
+//     // Send notification
+//     if (userId && io) {
+//       let message = '';
+//       if (paymentType === 'order') {
+//         if (paymentStatus === 'completed') message = `🎉 Your order payment (ref: ${txRef}) was successful!`;
+//         else if (paymentStatus === 'cancelled') message = `⚠️ Your order payment (ref: ${txRef}) was cancelled.`;
+//         else message = `ℹ️ Your order payment (ref: ${txRef}) is ${paymentStatus}.`;
+//       } else if (paymentType === 'delivery') {
+//         if (paymentStatus === 'completed') message = `🚚 Delivery fee (ref: ${txRef}) was paid successfully!`;
+//         else if (paymentStatus === 'cancelled') message = `⚠️ Delivery payment (ref: ${txRef}) was cancelled.`;
+//         else message = `ℹ️ Your delivery payment (ref: ${txRef}) is ${paymentStatus}.`;
+//       }
 
-      await sql`
-        INSERT INTO notifications (user_id, title, body, read, created_at)
-        VALUES (${userId}, 'Payment Update', ${message}, false, NOW())
-      `;
+//       await sql`
+//         INSERT INTO notifications (user_id, title, body, read, created_at)
+//         VALUES (${userId}, 'Payment Update', ${message}, false, NOW())
+//       `;
 
-      io.to(`user_${userId}`).emit('paymentUpdate', { tx_ref: txRef, status: paymentStatus, message });
-      console.log(`🔔 Payment notification sent for user ${userId}: ${message}`);
-    }
+//       io.to(`user_${userId}`).emit('paymentUpdate', { tx_ref: txRef, status: paymentStatus, message });
+//       console.log(`🔔 Payment notification sent for user ${userId}: ${message}`);
+//     }
 
-    res.status(200).send('Webhook processed successfully');
-  } catch (err) {
-    console.error('❌ Flutterwave webhook processing error:', err);
-    res.status(500).send('Server error processing webhook');
-  }
-});
+//     res.status(200).send('Webhook processed successfully');
+//   } catch (err) {
+//     console.error('❌ Flutterwave webhook processing error:', err);
+//     res.status(500).send('Server error processing webhook');
+//   }
+// });
 
 // Webhook test route
 // ======== FLUTTERWAVE WEBHOOK ========
