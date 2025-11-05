@@ -3,7 +3,8 @@ const router = express.Router();
 const {
   payOrderDelivery,
   verifyFlutterwaveWebhook,
-  verifyPayment, // ✅ add this
+  verifyPayment,
+  confirmPayment, // ✅ add this
 } = require('../controllers/paymentsController'); // make sure this file exports verifyPayment
 const { verifyBuyer } = require('../middleware/auth');
 const { sql } = require('../db');
@@ -51,5 +52,9 @@ router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
 
 // ✅ Flutterwave webhook route (public, no auth)
 router.post('/flutterwave-webhook', verifyFlutterwaveWebhook);
+
+// ✅ Manual confirmation route (called by your app)
+router.post('/confirm-payment', confirmPayment);
+
 
 module.exports = router;

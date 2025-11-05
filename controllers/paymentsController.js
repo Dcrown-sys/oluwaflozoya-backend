@@ -187,3 +187,75 @@ exports.verifyPayment = async (req, res) => {
     }
   };
   
+
+  // Verify payment manually after Flutterwave redirect
+exports.confirmPayment = async (req, res) => {
+    try {
+      const { transaction_id, tx_ref, order_id } = req.body;
+  
+      if (!transaction_id && !tx_ref) {
+        return res.status(400).json({
+          success: false,
+          message: 'Missing transaction_id or tx_ref'
+        });
+      }
+  
+      // Verify with Flutterwave API
+      const verifyRes = await fetch(
+        `https://api.flutterwave.com/v3/transactions/${transaction_id || tx_ref}/verify`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+          },
+        }
+      );
+  
+      const data = await verifyRes.json();
+      console.log('🔍 Flutterwave verify response:', data);
+  
+      if (data.status !== 'success' || data.data.status !== 'successful') {
+        return res.status(400).json({
+          success: false,
+          message: 'Payment not verified',
+        });
+      }
+  
+      // Update payment in your database
+      await sql`
+        UPDATE payments
+        SET status = 'paid',
+            verified = true,
+            updated_at = NOW()
+        WHERE tx_ref = ${data.data.tx_ref}
+        RETURNING *;
+      `;
+  
+      // Optionally update order table if payment relates to an order
+      if (order_id) {
+        await sql`
+          UPDATE orders
+          SET payment_status = 'paid'
+          WHERE id = ${order_id};
+        `;
+      }
+  
+      res.status(200).json({
+        success: true,
+        message: 'Payment confirmed successfully',
+        data: {
+          tx_ref: data.data.tx_ref,
+          amount: data.data.amount,
+          currency: data.data.currency,
+          status: data.data.status,
+        },
+      });
+    } catch (err) {
+      console.error('❌ confirmPayment error:', err);
+      res.status(500).json({
+        success: false,
+        message: 'Error confirming payment',
+        error: err.message,
+      });
+    }
+  };
+  
