@@ -1,4 +1,3 @@
-// server.js — cleaned and simplified
 require('dotenv').config();
 
 const express = require('express');
@@ -11,79 +10,59 @@ const path = require('path');
 // Controllers & routes
 const adminController = require('./controllers/adminController');
 const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
-const geocodeRoutes = require('./routes/geocodeRoutes');
+const geocodeRoutes = require("./routes/geocodeRoutes");
 const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
-const paymentsRoutes = require('./routes/paymentsRoutes'); // contains /flutterwave-webhook etc.
-const courierRoutes = require('./routes/courierRoutes');
-const deliveryRoutes = require('./routes/deliveryRoutes');
+const paymentsRoutes = require('./routes/paymentsRoutes');
+const courierRoutes = require("./routes/courierRoutes");
+const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
-const adminOrdersRoutes = require('./routes/adminOrdersRoutes');
+
 
 const app = express();
 const server = http.createServer(app);
-
-// Socket.IO
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-// Pass Socket.IO instance to controllers that need it
-if (adminKYCApprovalController && typeof adminKYCApprovalController.setSocket === 'function') {
-  adminKYCApprovalController.setSocket(io);
-}
-if (adminController && typeof adminController.initSocketIO === 'function') {
-  adminController.initSocketIO(io);
-}
+
+
+
+// Pass Socket.IO instance to controllers
+adminKYCApprovalController.setSocket(io);
+adminController.initSocketIO(io);
 
 // ======== MIDDLEWARE ========
-//
-// IMPORTANT: apply express.raw for the webhook route BEFORE express.json()
-// so the webhook route gets the raw body (required by Flutterwave signature verification).
-//
-app.use('/api/flutterwave-webhook', express.raw({ type: 'application/json' }));
+
+// Raw body ONLY for Flutterwave webhook
+app.use('/api/admin/flutterwave-webhook', express.raw({ type: 'application/json' }));
 
 // Standard middleware
 app.use(cors());
-app.use(express.json()); // other routes get normal JSON body parsing
-
-// Static uploads
+app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// ======== ROUTES ========
-// Keep API routes under /api for consistency
-app.use('/api/geocode', geocodeRoutes);
+app.use("/api/geocode", geocodeRoutes);
 app.use('/api/courier', courierKYCRoutes);
-app.use('/api/admin', adminKYCApprovalRoutes); // admin KYC endpoints
+app.use('/api/admin', adminKYCApprovalRoutes);
 app.use('/api/auth', authRoutes);
-
-// Admin API (existing admin controller routes)
-app.use('/api/admin', adminRoutes); // NOTE: adminRoutes exports many admin endpoints
-
-// Payments & webhook (mounted at /api so webhook becomes /api/flutterwave-webhook)
-app.use('/api', paymentsRoutes);
-
-// Admin orders (separate file)
-app.use('/api/admin', adminOrdersRoutes);
-
-// Couriers & delivery
-app.use('/api/couriers', courierRoutes);
-app.use('/api/delivery', deliveryRoutes);
-app.use('/api/courier-switch', courierSwitchRoutes);
-
-// Orders
+app.use('/admin', adminRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/payments', paymentsRoutes);
+app.use('/api/admin', require('./routes/adminOrdersRoutes'));
+app.use("/api/couriers", courierRoutes);
+app.use("/api/delivery", deliveryRoutes);
+app.use("/api/courier-switch", courierSwitchRoutes)
 app.use('/api/order', orderRoutes);
 
-// Optional: if you still want to expose an "admin UI" under /admin (non-API), uncomment below.
-// app.use('/admin', adminRoutes);
 
 // ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
 
+  // Courier location updates
   socket.on('locationUpdate', async (data) => {
     try {
       const { courier_id, latitude, longitude } = data;
@@ -102,6 +81,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Send notifications
   socket.on('sendNotification', async (data) => {
     try {
       const { user_id, message, type } = data;
@@ -118,6 +98,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Join room
   socket.on('joinUserRoom', (user_id) => {
     socket.join(`user_${user_id}`);
     console.log(`📌 User ${user_id} joined their room`);
@@ -128,10 +109,105 @@ io.on('connection', (socket) => {
   });
 });
 
-// ======== HEALTH CHECK ========
+// ======== FLUTTERWAVE WEBHOOK ========
+// app.post('/api/admin/flutterwave-webhook', async (req, res) => {
+//   const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
+//   const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
+
+//   if (!signature || signature !== FLW_SECRET_HASH) {
+//     console.warn('⚠️ Invalid Flutterwave signature');
+//     return res.status(401).send('⚠️ Invalid Flutterwave signature');
+//   }
+
+//   try {
+//     const payload = JSON.parse(req.body.toString());
+//     console.log('✅ Flutterwave webhook received:', payload);
+
+//     const { event, data } = payload;
+//     if (!event || !data || !data.tx_ref) return res.status(400).send('Invalid payload');
+
+//     const txRef = data.tx_ref;
+//     const fwStatus = (data.status || '').toLowerCase();
+
+//     // Map Flutterwave status to DB status
+//     let paymentStatus = 'pending';
+//     if (['successful', 'completed'].includes(fwStatus)) paymentStatus = 'completed';
+//     else if (['failed', 'cancelled'].includes(fwStatus)) paymentStatus = 'cancelled';
+//     else if (fwStatus === 'pending') paymentStatus = 'pending';
+
+//     // Update payment
+//     const updatedPayments = await sql`
+//       UPDATE payments
+//       SET status = ${paymentStatus}, amount = ${data.amount}, currency = ${data.currency}, updated_at = NOW()
+//       WHERE tx_ref = ${txRef}
+//       RETURNING id, user_id, payment_reference, payment_type
+
+//     `;
+
+//     if (!updatedPayments.length) {
+//       console.warn(`⚠️ Payment with tx_ref ${txRef} not found`);
+//       return res.status(404).send('Payment not found');
+//     }
+
+//     const { user_id: userId, payment_reference: paymentReference, payment_type: paymentType } = updatedPayments[0];
+
+
+//     // Update corresponding order status
+//     let orderStatus = 'pending';
+//     if (paymentType === 'order') {
+//       if (paymentStatus === 'completed') orderStatus = 'paid';
+//       else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
+//     } else if (paymentType === 'delivery') {
+//       if (paymentStatus === 'completed') orderStatus = 'delivery_paid';
+//       else if (paymentStatus === 'cancelled') orderStatus = 'cancelled';
+//     }
+
+//     if (paymentReference) {
+//       await sql`
+//         UPDATE orders
+//         SET status = ${orderStatus}, updated_at = NOW()
+//         WHERE payment_reference = ${paymentReference}
+//       `;
+//     }
+
+//     // Send notification
+//     if (userId && io) {
+//       let message = '';
+//       if (paymentType === 'order') {
+//         if (paymentStatus === 'completed') message = `🎉 Your order payment (ref: ${txRef}) was successful!`;
+//         else if (paymentStatus === 'cancelled') message = `⚠️ Your order payment (ref: ${txRef}) was cancelled.`;
+//         else message = `ℹ️ Your order payment (ref: ${txRef}) is ${paymentStatus}.`;
+//       } else if (paymentType === 'delivery') {
+//         if (paymentStatus === 'completed') message = `🚚 Delivery fee (ref: ${txRef}) was paid successfully!`;
+//         else if (paymentStatus === 'cancelled') message = `⚠️ Delivery payment (ref: ${txRef}) was cancelled.`;
+//         else message = `ℹ️ Your delivery payment (ref: ${txRef}) is ${paymentStatus}.`;
+//       }
+
+//       await sql`
+//         INSERT INTO notifications (user_id, title, body, read, created_at)
+//         VALUES (${userId}, 'Payment Update', ${message}, false, NOW())
+//       `;
+
+//       io.to(`user_${userId}`).emit('paymentUpdate', { tx_ref: txRef, status: paymentStatus, message });
+//       console.log(`🔔 Payment notification sent for user ${userId}: ${message}`);
+//     }
+
+//     res.status(200).send('Webhook processed successfully');
+//   } catch (err) {
+//     console.error('❌ Flutterwave webhook processing error:', err);
+//     res.status(500).send('Server error processing webhook');
+//   }
+// });
+
+// Webhook test route
+// ======== FLUTTERWAVE WEBHOOK ========
+app.use('/api/payment', paymentsRoutes);
+
+
+// Health check
 app.get('/', (req, res) => res.send('🚀 Oluwaflo backend is running!'));
 
-// ======== REQUEST LOGGER (after routes to show route handling) ========
+// Request logger
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
@@ -143,7 +219,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', async () => {
   try {
     const result = await sql`SELECT NOW()`;
-    console.log('✅ Database connected:', result);
+    console.log(`✅ Database connected:`, result);
   } catch (error) {
     console.error('❌ Database connection failed:', error);
   }
