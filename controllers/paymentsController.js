@@ -234,8 +234,9 @@ exports.confirmPayment = async (req, res) => {
       const [paymentUpdate] = await sql`
         UPDATE payments
         SET 
-          status = 'paid',
-          verified = true,
+          status = 'completed',
+          flw_ref = ${data.data.flw_ref},
+          payment_method = ${data.data.payment_type},
           updated_at = NOW()
         WHERE tx_ref = ${data.data.tx_ref}
         RETURNING *;
