@@ -188,7 +188,7 @@ exports.verifyPayment = async (req, res) => {
   };
   
 
-  // Verify payment manually after Flutterwave redirect
+ // ✅ Confirm payment manually after Flutterwave redirect
 exports.confirmPayment = async (req, res) => {
     try {
       const { transaction_id, tx_ref, order_id } = req.body;
@@ -196,41 +196,52 @@ exports.confirmPayment = async (req, res) => {
       if (!transaction_id && !tx_ref) {
         return res.status(400).json({
           success: false,
-          message: 'Missing transaction_id or tx_ref'
+          message: 'Missing transaction_id or tx_ref',
         });
       }
   
-      // Verify with Flutterwave API
-      const verifyRes = await fetch(
-        `https://api.flutterwave.com/v3/transactions/${transaction_id || tx_ref}/verify`,
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-          },
-        }
-      );
+      // ✅ Use correct Flutterwave verify endpoint
+      const verifyUrl = transaction_id
+        ? `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`
+        : `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`;
+  
+      const verifyRes = await fetch(verifyUrl, {
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
   
       const data = await verifyRes.json();
       console.log('🔍 Flutterwave verify response:', data);
   
-      if (data.status !== 'success' || data.data.status !== 'successful') {
+      // ✅ Handle invalid or failed responses
+      if (!data || data.status !== 'success' || !data.data) {
         return res.status(400).json({
           success: false,
-          message: 'Payment not verified',
+          message: data?.message || 'Unable to verify transaction',
         });
       }
   
-      // Update payment in your database
-      await sql`
+      if (data.data.status !== 'successful') {
+        return res.status(400).json({
+          success: false,
+          message: `Payment not successful (${data.data.status})`,
+        });
+      }
+  
+      // ✅ Update payment record in DB
+      const [paymentUpdate] = await sql`
         UPDATE payments
-        SET status = 'paid',
-            verified = true,
-            updated_at = NOW()
+        SET 
+          status = 'paid',
+          verified = true,
+          updated_at = NOW()
         WHERE tx_ref = ${data.data.tx_ref}
         RETURNING *;
       `;
   
-      // Optionally update order table if payment relates to an order
+      // ✅ Update related order if provided
       if (order_id) {
         await sql`
           UPDATE orders
@@ -244,6 +255,7 @@ exports.confirmPayment = async (req, res) => {
         message: 'Payment confirmed successfully',
         data: {
           tx_ref: data.data.tx_ref,
+          transaction_id: data.data.id,
           amount: data.data.amount,
           currency: data.data.currency,
           status: data.data.status,
