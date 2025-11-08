@@ -1880,7 +1880,7 @@ exports.getCategories = async (req, res) => {
         tx_ref,
         amount: Number(totalAmount.toFixed(2)),
         currency: 'NGN',
-        redirect_url: redirectUrl,
+        // redirect_url: redirectUrl,
         customer: {
           email: email || 'zoyaprocurementcompany@gmail.com',
           name: name || 'Valued Customer',
