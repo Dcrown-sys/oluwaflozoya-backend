@@ -39,7 +39,9 @@ exports.payOrderDelivery = async (req, res) => {
       tx_ref: txRef,
       amount: order.delivery_fee,
       currency: 'NGN',
-      redirect_url: `oluwoflomobile://payment-success?status=completed&ref=${txRef}`,
+    //   redirect_url: 'https://your-backend.com/payment-success',
+
+
       customer: {
         name: user.name,
         email: user.email,
