@@ -1876,7 +1876,7 @@ exports.getCategories = async (req, res) => {
         tx_ref,
         amount: Number(totalAmount.toFixed(2)),
         currency: 'NGN',
-        redirect_url: 'https://example.com/success',
+        redirect_url: 'https://flutterwave.com',
         customer: {
           email: email || 'zoyaprocurementcompany@gmail.com',
           name: name || 'Valued Customer',
