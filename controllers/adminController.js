@@ -1871,16 +1871,13 @@ exports.getCategories = async (req, res) => {
       // -----------------------
       // 💰 Flutterwave Payment Link
       // -----------------------
-      const redirectUrl =
-        process.env.FRONTEND_URL
-          ? `${process.env.FRONTEND_URL}/payment-success?order_id=${order.id}&payment_type=${payment_type}`
-          : `https://oluwaflo.vercel.app/payment-success?order_id=${order.id}&payment_type=${payment_type}`;
-  
+
       const payload = {
         tx_ref,
         amount: Number(totalAmount.toFixed(2)),
         currency: 'NGN',
-        // redirect_url: redirectUrl,
+      
+       
         customer: {
           email: email || 'zoyaprocurementcompany@gmail.com',
           name: name || 'Valued Customer',
