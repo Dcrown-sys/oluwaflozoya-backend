@@ -94,7 +94,7 @@ router.get('/payment-success', (req, res) => {
       <body>
         <h1>🎉 Payment Successful!</h1>
         <p>Redirecting to app...</p>
-        <script>setTimeout(() => { window.location.href = "https://zoyaapp://payment-success"; }, 1500);</script>
+        <script>setTimeout(() => { window.location.href = "oluwoflomobile://payment-success";}, 1500);</script>
       </body>
     </html>
   `);
