@@ -1780,9 +1780,6 @@ exports.getCategories = async (req, res) => {
     return { orderId, totalAmount };
   }
   
-  // ============================
-  // NEW: Create Payment Link
-  // ============================
   exports.createPaymentLink = async (req, res) => {
     try {
       const {
@@ -1796,6 +1793,9 @@ exports.getCategories = async (req, res) => {
         payment_type = 'order',
       } = req.body;
   
+      // -----------------------
+      // Validate input
+      // -----------------------
       if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
         return res.status(400).json({ error: 'Valid user_id is required' });
       }
@@ -1841,17 +1841,18 @@ exports.getCategories = async (req, res) => {
   
           const vat = subtotal * 0.03;
           const serviceFee = subtotal * 0.03;
-          const total = subtotal + vat + serviceFee;
-          totalAmount = total;
+          totalAmount = subtotal + vat + serviceFee;
   
           await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.id}`;
+  
           return { id: newOrder.id };
         });
+      }
   
-        // -----------------------
-        // 🚚 Handle DELIVERY payments
-        // -----------------------
-      } else if (payment_type === 'delivery') {
+      // -----------------------
+      // 🚚 Handle DELIVERY payments
+      // -----------------------
+      else if (payment_type === 'delivery') {
         if (!order_id) {
           return res.status(400).json({ error: 'order_id required for delivery payment' });
         }
@@ -1871,12 +1872,11 @@ exports.getCategories = async (req, res) => {
       // -----------------------
       // 💰 Flutterwave Payment Link
       // -----------------------
-
       const payload = {
         tx_ref,
         amount: Number(totalAmount.toFixed(2)),
         currency: 'NGN',
-        redirect_url: "https://oluwaflozoya-backend.onrender.com/payment-success",
+        redirect_url: 'oluwoflomobile://payment-success', // deep link for app
         customer: {
           email: email || 'zoyaprocurementcompany@gmail.com',
           name: name || 'Valued Customer',
@@ -1938,7 +1938,6 @@ exports.getCategories = async (req, res) => {
       });
     }
   };
-  
   // ============================
   // 🚀 1. Initiate Payment (legacy)
   // ============================
