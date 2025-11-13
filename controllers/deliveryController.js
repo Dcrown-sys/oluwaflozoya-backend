@@ -358,4 +358,73 @@ exports.flutterwavePaymentCallback = async (req, res) => {
       res.status(500).send('Internal server error during Flutterwave callback');
     }
   };
+
+ /**
+ * STEP 5: Get full order + delivery + courier + items details
+ */
+exports.getOrderAndDeliveryDetails = async (req, res) => {
+    const { order_id } = req.params;
+  
+    try {
+      // 1️⃣ Fetch order + delivery + courier info
+      const [order] = await sql`
+        SELECT 
+          o.id AS order_id,
+          o.status AS order_status,
+          o.total_amount,
+          o.created_at,
+          o.updated_at,
+          d.id AS delivery_id,
+          d.status AS delivery_status,
+          d.delivery_fee,
+          d.created_at AS delivery_created_at,
+          d.updated_at AS delivery_updated_at,
+          p.status AS payment_status,
+          p.amount AS payment_amount,
+          c.id AS courier_id,
+          c.full_name AS courier_name,
+          c.phone AS courier_phone,
+          c.vehicle_type,
+          c.vehicle_plate
+        FROM orders o
+        LEFT JOIN deliveries d ON d.order_id = o.id
+        LEFT JOIN payments p ON p.order_id = o.id AND p.payment_type = 'delivery_fee'
+        LEFT JOIN couriers c ON c.id = d.courier_id
+        WHERE o.id = ${order_id}
+        LIMIT 1;
+      `;
+  
+      if (!order) {
+        return res.status(404).json({ success: false, message: 'Order not found' });
+      }
+  
+      // 2️⃣ Fetch order items with product info
+      const items = await sql`
+        SELECT 
+          oi.id AS order_item_id,
+          oi.product_id,
+          oi.product_name,
+          oi.quantity,
+          oi.unit_price,
+          oi.total_price,
+          p.description AS product_description,
+          p.image_url AS product_image
+        FROM order_items oi
+        LEFT JOIN products p ON p.id = oi.product_id
+        WHERE oi.order_id = ${order_id};
+      `;
+  
+      // 3️⃣ Respond with order + delivery + courier + items
+      res.json({
+        success: true,
+        order: {
+          ...order,
+          items,
+        },
+      });
+    } catch (err) {
+      console.error('❌ Error fetching order + delivery + items:', err);
+      res.status(500).json({ success: false, message: 'Server error fetching order details' });
+    }
+  };
   

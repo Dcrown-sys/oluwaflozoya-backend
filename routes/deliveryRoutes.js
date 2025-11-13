@@ -17,6 +17,9 @@ router.get('/pending/:order_id/pay', verifyToken, deliveryController.initiateDel
 // This does NOT require verifyToken, because Flutterwave servers will call it
 router.get('/payment/callback', deliveryController.flutterwavePaymentCallback);
 
+router.get('/order/:order_id/details', deliveryController.getOrderAndDeliveryDetails);
+
+
 // 🚚 Finalize delivery manually (admin-triggered only, optional)
 router.post('/finalize', verifyToken, deliveryController.finalizeDeliveryAfterPayment);
 
