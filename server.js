@@ -213,6 +213,37 @@ app.use((req, res, next) => {
   next();
 });
 
+// ======== FLUTTERWAVE REDIRECT PAGE ========
+app.get('/payment-success', (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Payment Successful</title>
+        <style>
+          body { 
+            font-family: system-ui, sans-serif; 
+            text-align: center; 
+            padding-top: 50px; 
+            background-color: #f9f9f9;
+          }
+          h1 { color: #4CAF50; }
+        </style>
+      </head>
+      <body>
+        <h1>🎉 Payment Successful!</h1>
+        <p>Thank you — you can close this tab.</p>
+        <script>
+          // Optional: redirect to your app via deep link
+          setTimeout(() => {
+            window.location.href = "oluwoflomobile://payment-success";
+          }, 1500);
+        </script>
+      </body>
+    </html>
+  `);
+});
+
+
 // ======== START SERVER ========
 const PORT = process.env.PORT || 3000;
 
