@@ -4,6 +4,9 @@ const { verifyToken } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const courierKYCController = require('../controllers/courierKYCController');
 
+
+const { sql } = require('../db');
+
 // KYC submission (selfie + document)
 router.post(
   '/kyc',
