@@ -1,6 +1,6 @@
 const axios = require("axios");
 
-const GOOGLE_MAPS_API_KEY = "AIzaSyCrZRCHQBDJZ7Kh8fFM4hvtS3KxyMt0dKA";
+const GOOGLE_MAPS_API_KEY = "AIzaSyCo7epvgSGY3XR9OrbKfwM-GU11dqV8vsg";
 
 /**
  * Convert a human-readable address to latitude and longitude
