@@ -135,7 +135,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
       tx_ref,
       amount,
       currency: 'NGN',
-      redirect_url: `oluwoflomobile://payment-success?order_id=${order_id}&tx_ref=${tx_ref}`,
+      redirect_url: "oluwoflomobile://payment-success",
       customer: {
         email: req.user?.email || 'zoyaprocurementcompany@gmail.com',
         name: req.user?.name || 'Oluwaflo Buyer',
@@ -143,9 +143,11 @@ exports.initiateDeliveryPayment = async (req, res) => {
       meta: {
         order_id,
         delivery_id,
-        type: 'delivery_fee',
+        payment_type: 'delivery_fee',
+        tx_ref,
       },
     };
+    
     
 
     const fwResponse = await flutterwave.createPaymentLink(fwPayload);
