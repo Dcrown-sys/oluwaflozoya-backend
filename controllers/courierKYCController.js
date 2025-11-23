@@ -12,6 +12,7 @@ exports.submitKYC = async (req, res) => {
     const selfieFile = req.files?.selfie?.[0];
     const documentFile = req.files?.document?.[0];
 
+    // Validate all required fields
     if (!full_name || !phone || !address || !vehicle_type || !vehicle_plate || !selfieFile || !documentFile) {
       return res.status(400).json({ success: false, message: "All fields are required" });
     }
@@ -29,30 +30,24 @@ exports.submitKYC = async (req, res) => {
       documentFile.mimetype
     );
 
-    // Check if courier exists
-    const existingCourier = await sql`SELECT id FROM couriers WHERE user_id = ${userId}`;
-
-    if (existingCourier.length > 0) {
-      await sql`
-        UPDATE couriers
-        SET full_name = ${full_name},
-            phone = ${phone},
-            address = ${address},
-            vehicle_type = ${vehicle_type},
-            vehicle_plate = ${vehicle_plate},
-            selfie_url = ${selfieUrl},
-            document_url = ${documentUrl},
-            verification_status = 'pending'
-        WHERE user_id = ${userId}
-      `;
-    } else {
-      await sql`
-        INSERT INTO couriers 
-          (user_id, full_name, phone, address, vehicle_type, vehicle_plate, selfie_url, document_url, verification_status)
-        VALUES 
-          (${userId}, ${full_name}, ${phone}, ${address}, ${vehicle_type}, ${vehicle_plate}, ${selfieUrl}, ${documentUrl}, 'pending')
-      `;
-    }
+    // UPSERT: Insert new courier or update existing one
+    await sql`
+      INSERT INTO couriers
+        (user_id, full_name, phone, address, vehicle_type, vehicle_plate, selfie_url, document_url, verification_status, created_at, updated_at)
+      VALUES
+        (${userId}, ${full_name}, ${phone}, ${address}, ${vehicle_type}, ${vehicle_plate}, ${selfieUrl}, ${documentUrl}, 'pending', NOW(), NOW())
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        full_name = ${full_name},
+        phone = ${phone},
+        address = ${address},
+        vehicle_type = ${vehicle_type},
+        vehicle_plate = ${vehicle_plate},
+        selfie_url = ${selfieUrl},
+        document_url = ${documentUrl},
+        verification_status = 'pending',
+        updated_at = NOW()
+    `;
 
     res.json({ success: true, message: "KYC submitted successfully" });
   } catch (err) {
