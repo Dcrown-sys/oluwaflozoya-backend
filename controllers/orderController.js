@@ -148,7 +148,7 @@ exports.getOrderDetails = async (req, res) => {
         const [courier] = await sql`
           SELECT id, full_name, phone, vehicle_type, vehicle_plate
           FROM couriers
-          WHERE id = ${delivery.courier_id}
+          WHERE user_id = ${delivery.courier_id}
           LIMIT 1;
         `;
         courierInfo = courier || null;
