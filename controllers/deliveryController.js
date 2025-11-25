@@ -94,28 +94,36 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
     const { order_id } = req.params;
-    if (!order_id)
-      return res.status(400).json({ success: false, message: 'order_id is required' });
 
+    if (!order_id) {
+      return res.status(400).json({ success: false, message: "order_id is required" });
+    }
+
+    // Get pending delivery
     const [delivery] = await sql`
       SELECT id AS delivery_id, delivery_fee
       FROM deliveries
       WHERE order_id = ${order_id} AND status = 'pending'
       LIMIT 1;
     `;
+
     if (!delivery)
-      return res.status(404).json({ success: false, message: 'No pending delivery found' });
+      return res.status(404).json({ success: false, message: "No pending delivery found" });
 
     const { delivery_id, delivery_fee } = delivery;
+
     const amount = Number(delivery_fee);
 
-    const [payment] = await sql`
+    // Find or create tx_ref
+    let [payment] = await sql`
       SELECT tx_ref FROM payments
       WHERE order_id = ${order_id} AND payment_type = 'delivery_fee'
       LIMIT 1;
     `;
+
     const tx_ref = payment?.tx_ref || `DELIVERY-${order_id}-${Date.now()}`;
 
+    // Insert if not exists
     if (!payment) {
       await sql`
         INSERT INTO payments (
@@ -124,61 +132,43 @@ exports.initiateDeliveryPayment = async (req, res) => {
         )
         VALUES (
           ${order_id},
-          (SELECT user_id FROM orders WHERE id=${order_id}),
+          (SELECT user_id FROM orders WHERE id = ${order_id}),
           ${amount}, 'pending', NULL, ${tx_ref},
           'flutterwave', 'NGN', 'delivery_fee', NOW()
         );
       `;
     }
 
-    const fwPayload = {
+    // Inline payment payload (NO REDIRECT URL)
+    const inlinePayload = {
+      public_key: process.env.FLW_PUBLIC_KEY,
       tx_ref,
       amount,
-      currency: 'NGN',
-      redirect_url: "oluwoflomobile://payment-success",
+      currency: "NGN",
+      payment_options: "card,ussd,banktransfer",
       customer: {
-        email: req.user?.email || 'zoyaprocurementcompany@gmail.com',
-        name: req.user?.name || 'Oluwaflo Buyer',
+        email: req.user?.email || "buyer@oluwaflo.com",
+        name: req.user?.name || "Oluwaflo Buyer"
       },
       meta: {
         order_id,
         delivery_id,
-        payment_type: 'delivery_fee',
-        tx_ref,
-      },
+        payment_type: "delivery_fee"
+      }
     };
-    
-    
-
-    const fwResponse = await flutterwave.createPaymentLink(fwPayload);
-    const paymentLink =
-      fwResponse?.data?.link ||
-      fwResponse?.link ||
-      fwResponse?.data?.checkout_url ||
-      fwResponse?.data?.payment_link;
-
-    if (!paymentLink) {
-      console.error('❌ Flutterwave create returned unexpected:', fwResponse);
-      return res.status(500).json({ success: false, message: 'Failed to get payment link from Flutterwave' });
-    }
-
-    await sql`
-      UPDATE payments
-      SET payment_reference = ${paymentLink}, updated_at = NOW()
-      WHERE tx_ref = ${tx_ref};
-    `;
 
     return res.json({
       success: true,
-      message: 'Delivery payment initialized',
-      payment_url: paymentLink,
-      tx_ref,
+      message: "Inline payment initialized",
+      payload: inlinePayload
     });
+
   } catch (err) {
-    console.error('❌ Error initiating delivery payment:', err);
-    return res.status(500).json({ success: false, message: 'Server error' });
+    console.error("❌ Error initiating inline delivery payment:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
 
 /**
  * STEP 3: Manual (admin) finalization after payment
