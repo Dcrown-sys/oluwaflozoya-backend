@@ -91,7 +91,7 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
 /**
  * STEP 2: Buyer initiates payment for the pending delivery
  */
-// controllers/paymentController.js
+/// controllers/paymentController.js
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
     const { order_id } = req.params;
@@ -102,7 +102,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
 
     // 1️⃣ Fetch pending delivery for this order
     const [delivery] = await sql`
-      SELECT id AS delivery_id, delivery_fee
+      SELECT id AS delivery_id, COALESCE(delivery_fee, 0) AS delivery_fee
       FROM deliveries
       WHERE order_id = ${order_id} AND status = 'pending'
       LIMIT 1;
@@ -113,7 +113,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
     }
 
     const { delivery_id, delivery_fee } = delivery;
-    const amount = Number(delivery_fee);
+    const amount = Number(delivery_fee) || 0;
 
     // 2️⃣ Check if payment already exists
     let [payment] = await sql`
@@ -133,7 +133,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
         )
         VALUES (
           ${order_id},
-          (SELECT user_id FROM orders WHERE id = ${order_id}),
+          (SELECT COALESCE(user_id, '') FROM orders WHERE id = ${order_id}),
           ${amount}, 'pending', NULL, ${tx_ref},
           'flutterwave', 'NGN', 'delivery_fee', NOW()
         );
@@ -142,7 +142,10 @@ exports.initiateDeliveryPayment = async (req, res) => {
 
     // 4️⃣ Fetch user info for Flutterwave
     const [user] = await sql`
-      SELECT name, email, phone_number
+      SELECT
+        COALESCE(name, 'Buyer') AS name,
+        COALESCE(email, 'buyer@oluwaflo.com') AS email,
+        COALESCE(phone_number, '08000000000') AS phone_number
       FROM users
       WHERE id = (SELECT user_id FROM orders WHERE id = ${order_id})
       LIMIT 1
@@ -153,12 +156,13 @@ exports.initiateDeliveryPayment = async (req, res) => {
     }
 
     // 5️⃣ Format phone number for Flutterwave
-    let phoneNumber = user.phone_number || "08000000000";
-    phoneNumber = phoneNumber.startsWith("0") ? `+234${phoneNumber.slice(1)}` : phoneNumber;
+    let phoneNumber = user.phone_number.startsWith("0")
+      ? `+234${user.phone_number.slice(1)}`
+      : user.phone_number;
 
     // 6️⃣ Build modal payload
     const inlinePayload = {
-      public_key: process.env.FLW_PUBLIC_KEY,
+      public_key: process.env.FLW_PUBLIC_KEY || "",
       tx_ref,
       amount,
       currency: "NGN",
@@ -179,7 +183,19 @@ exports.initiateDeliveryPayment = async (req, res) => {
       }
     };
 
+    // ✅ Log payload and individual fields for debugging
     console.log("🚀 Inline payment payload:", inlinePayload);
+    console.log("💡 Field logs:", {
+      public_key: inlinePayload.public_key,
+      tx_ref: inlinePayload.tx_ref,
+      amount: inlinePayload.amount,
+      customer_name: inlinePayload.customer.name,
+      customer_email: inlinePayload.customer.email,
+      customer_phone: inlinePayload.customer.phonenumber,
+      meta_order_id: inlinePayload.meta.order_id,
+      meta_delivery_id: inlinePayload.meta.delivery_id,
+      meta_payment_type: inlinePayload.meta.payment_type,
+    });
 
     // 7️⃣ Send payload to app
     return res.json({
