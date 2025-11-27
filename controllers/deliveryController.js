@@ -91,6 +91,7 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
 /**
  * STEP 2: Buyer initiates payment for the pending delivery
  */
+// controllers/paymentController.js
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
     const { order_id } = req.params;
@@ -99,7 +100,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: "order_id is required" });
     }
 
-    // Get pending delivery
+    // 1️⃣ Fetch pending delivery for this order
     const [delivery] = await sql`
       SELECT id AS delivery_id, delivery_fee
       FROM deliveries
@@ -107,14 +108,14 @@ exports.initiateDeliveryPayment = async (req, res) => {
       LIMIT 1;
     `;
 
-    if (!delivery)
+    if (!delivery) {
       return res.status(404).json({ success: false, message: "No pending delivery found" });
+    }
 
     const { delivery_id, delivery_fee } = delivery;
-
     const amount = Number(delivery_fee);
 
-    // Find or create tx_ref
+    // 2️⃣ Check if payment already exists
     let [payment] = await sql`
       SELECT tx_ref FROM payments
       WHERE order_id = ${order_id} AND payment_type = 'delivery_fee'
@@ -123,7 +124,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
 
     const tx_ref = payment?.tx_ref || `DELIVERY-${order_id}-${Date.now()}`;
 
-    // Insert if not exists
+    // 3️⃣ Insert payment if not exists
     if (!payment) {
       await sql`
         INSERT INTO payments (
@@ -139,24 +140,48 @@ exports.initiateDeliveryPayment = async (req, res) => {
       `;
     }
 
-    // Inline payment payload (NO REDIRECT URL)
+    // 4️⃣ Fetch user info for Flutterwave
+    const [user] = await sql`
+      SELECT name, email, phone_number
+      FROM users
+      WHERE id = (SELECT user_id FROM orders WHERE id = ${order_id})
+      LIMIT 1
+    `;
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // 5️⃣ Format phone number for Flutterwave
+    let phoneNumber = user.phone_number || "08000000000";
+    phoneNumber = phoneNumber.startsWith("0") ? `+234${phoneNumber.slice(1)}` : phoneNumber;
+
+    // 6️⃣ Build modal payload
     const inlinePayload = {
       public_key: process.env.FLW_PUBLIC_KEY,
       tx_ref,
       amount,
       currency: "NGN",
-      payment_options: "card,ussd,banktransfer",
+      payment_options: "card,ussd,banktransfer,qr",
       customer: {
-        email: req.user?.email || "buyer@oluwaflo.com",
-        name: req.user?.name || "Oluwaflo Buyer"
+        email: user.email,
+        name: user.name,
+        phonenumber: phoneNumber
       },
       meta: {
-        order_id,
-        delivery_id,
+        order_id: String(order_id),
+        delivery_id: String(delivery_id),
         payment_type: "delivery_fee"
+      },
+      customizations: {
+        title: "Zoya Delivery Fee",
+        description: "Payment for order delivery"
       }
     };
 
+    console.log("🚀 Inline payment payload:", inlinePayload);
+
+    // 7️⃣ Send payload to app
     return res.json({
       success: true,
       message: "Inline payment initialized",
@@ -165,7 +190,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
 
   } catch (err) {
     console.error("❌ Error initiating inline delivery payment:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
