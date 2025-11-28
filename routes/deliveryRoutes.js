@@ -19,6 +19,10 @@ router.get('/payment/callback', deliveryController.flutterwavePaymentCallback);
 
 router.get('/order/:order_id/details', deliveryController.getOrderAndDeliveryDetails);
 
+router.get("/delivery/verify/:orderId", deliveryController.verifyDeliveryPayment);
+
+
+
 
 // 🚚 Finalize delivery manually (admin-triggered only, optional)
 router.post('/finalize', verifyToken, deliveryController.finalizeDeliveryAfterPayment);

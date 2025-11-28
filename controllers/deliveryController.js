@@ -450,4 +450,49 @@ exports.getOrderAndDeliveryDetails = async (req, res) => {
       res.status(500).json({ success: false, message: 'Server error fetching order details' });
     }
   };
+
+  // controllers/deliveryController.js
+exports.verifyDeliveryPayment = async (req, res) => {
+  const { orderId } = req.params;
+  const { tx_ref } = req.query;
+
+  if (!orderId || !tx_ref) {
+    return res.status(400).json({ success: false, message: 'Missing orderId or tx_ref' });
+  }
+
+  try {
+    // Verify transaction with Flutterwave
+    const fwRes = await axios.get(`https://api.flutterwave.com/v3/transactions/${tx_ref}/verify`, {
+      headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` },
+    });
+
+    const data = fwRes.data?.data;
+    if (!data || data.status !== 'successful') {
+      return res.status(400).json({ success: false, message: 'Payment not successful' });
+    }
+
+    // Mark payment as completed
+    await sql`
+      UPDATE payments
+      SET status = 'completed', updated_at = NOW()
+      WHERE tx_ref = ${tx_ref};
+    `;
+
+    // Update order as delivery_paid
+    await sql`
+      UPDATE orders
+      SET status = 'delivery_paid', updated_at = NOW()
+      WHERE id = ${orderId};
+    `;
+
+    // Auto finalize delivery
+    await exports.finalizeDeliveryAfterPaymentAuto(orderId);
+
+    return res.json({ success: true, message: 'Payment verified and delivery finalized' });
+  } catch (err) {
+    console.error('❌ verifyDeliveryPayment error:', err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: 'Verification failed' });
+  }
+};
+
   
