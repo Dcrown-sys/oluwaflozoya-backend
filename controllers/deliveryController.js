@@ -91,122 +91,94 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
 /**
  * STEP 2: Buyer initiates payment for the pending delivery
  */
-/// controllers/paymentController.js
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
     const { order_id } = req.params;
 
     if (!order_id) {
-      return res.status(400).json({ success: false, message: "order_id is required" });
+      return res.status(400).json({ error: "order_id is required" });
     }
 
-    // 1️⃣ Fetch pending delivery for this order
-    const [delivery] = await sql`
-      SELECT id AS delivery_id, COALESCE(delivery_fee, 0) AS delivery_fee
-      FROM deliveries
-      WHERE order_id = ${order_id} AND status = 'pending'
+    // 1️⃣ Get the delivery fee from orders table
+    const [order] = await sql`
+      SELECT user_id, delivery_fee, name, email, phone_number
+      FROM orders
+      WHERE id = ${order_id}
       LIMIT 1;
     `;
 
-    if (!delivery) {
-      return res.status(404).json({ success: false, message: "No pending delivery found" });
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
     }
 
-    const { delivery_id, delivery_fee } = delivery;
-    const amount = Number(delivery_fee) || 0;
-
-    // 2️⃣ Check if payment already exists
-    let [payment] = await sql`
-      SELECT tx_ref FROM payments
-      WHERE order_id = ${order_id} AND payment_type = 'delivery_fee'
-      LIMIT 1;
-    `;
-
-    const tx_ref = payment?.tx_ref || `DELIVERY-${order_id}-${Date.now()}`;
-
-    // 3️⃣ Insert payment if not exists
-    if (!payment) {
-      await sql`
-        INSERT INTO payments (
-          order_id, user_id, amount, status, payment_reference, tx_ref,
-          payment_method, currency, payment_type, created_at
-        )
-        VALUES (
-          ${order_id},
-          (SELECT COALESCE(user_id, '') FROM orders WHERE id = ${order_id}),
-          ${amount}, 'pending', NULL, ${tx_ref},
-          'flutterwave', 'NGN', 'delivery_fee', NOW()
-        );
-      `;
+    const amount = Number(order.delivery_fee);
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Delivery fee is missing or invalid" });
     }
 
-    // 4️⃣ Fetch user info for Flutterwave
-    const [user] = await sql`
-      SELECT
-        COALESCE(name, 'Buyer') AS name,
-        COALESCE(email, 'buyer@oluwaflo.com') AS email,
-        COALESCE(phone_number, '08000000000') AS phone_number
-      FROM users
-      WHERE id = (SELECT user_id FROM orders WHERE id = ${order_id})
-      LIMIT 1
-    `;
+    // 2️⃣ Generate tx_ref
+    const tx_ref = `delivery-${Date.now()}-${uuidv4()}`;
 
-    if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
-    }
-
-    // 5️⃣ Format phone number for Flutterwave
-    let phoneNumber = user.phone_number.startsWith("0")
-      ? `+234${user.phone_number.slice(1)}`
-      : user.phone_number;
-
-    // 6️⃣ Build modal payload
-    const inlinePayload = {
-      public_key: process.env.FLW_PUBLIC_KEY || "",
+    // 3️⃣ Build Flutterwave payment payload (same as CartScreen)
+    const payload = {
       tx_ref,
-      amount,
+      amount: Number(amount.toFixed(2)),
       currency: "NGN",
-      payment_options: "card,ussd,banktransfer,qr",
+      redirect_url: "oluwoflomobile://payment-success",
       customer: {
-        email: user.email,
-        name: user.name,
-        phonenumber: phoneNumber
-      },
-      meta: {
-        order_id: String(order_id),
-        delivery_id: String(delivery_id),
-        payment_type: "delivery_fee"
+        email: order.email || "zoyaprocurementcompany@gmail.com",
+        name: order.name || "Customer",
+        phonenumber: order.phone_number || "08000000000",
       },
       customizations: {
-        title: "Zoya Delivery Fee",
-        description: "Payment for order delivery"
-      }
+        title: "Zoya Delivery Payment",
+        description: `Delivery fee for order ${order_id}`,
+      },
     };
 
-    // ✅ Log payload and individual fields for debugging
-    console.log("🚀 Inline payment payload:", inlinePayload);
-    console.log("💡 Field logs:", {
-      public_key: inlinePayload.public_key,
-      tx_ref: inlinePayload.tx_ref,
-      amount: inlinePayload.amount,
-      customer_name: inlinePayload.customer.name,
-      customer_email: inlinePayload.customer.email,
-      customer_phone: inlinePayload.customer.phonenumber,
-      meta_order_id: inlinePayload.meta.order_id,
-      meta_delivery_id: inlinePayload.meta.delivery_id,
-      meta_payment_type: inlinePayload.meta.payment_type,
-    });
+    console.log("🟢 [initiateDeliveryPayment] Payload:", payload);
 
-    // 7️⃣ Send payload to app
+    // 4️⃣ Call Flutterwave API (same endpoint as CartScreen)
+    const fwRes = await axios.post(
+      "https://api.flutterwave.com/v3/payments",
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!fwRes.data || fwRes.data.status !== "success") {
+      console.error("❌ Flutterwave rejected:", fwRes.data);
+      return res.status(400).json({
+        error: fwRes.data?.message || "Flutterwave error",
+        details: fwRes.data,
+      });
+    }
+
+    // 5️⃣ Save payment record locally (optional)
+    await sql`
+      INSERT INTO payments (
+        order_id, user_id, amount, status, tx_ref, payment_type, payment_method, currency
+      ) VALUES (
+        ${order_id}, ${order.user_id}, ${amount}, 'pending',
+        ${tx_ref}, 'delivery_fee', 'flutterwave', 'NGN'
+      );
+    `;
+
+    // 6️⃣ Return payment link to client for WebView modal
     return res.json({
       success: true,
-      message: "Inline payment initialized",
-      payload: inlinePayload
+      message: "Delivery payment initialized",
+      payment_url: fwRes.data.data.link,
+      tx_ref,
     });
 
   } catch (err) {
-    console.error("❌ Error initiating inline delivery payment:", err);
-    return res.status(500).json({ success: false, message: "Server error" });
+    console.error("❌ Delivery Payment Error:", err);
+    return res.status(500).json({ error: "Server error" });
   }
 };
 
