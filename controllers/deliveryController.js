@@ -96,10 +96,10 @@ exports.initiateDeliveryPayment = async (req, res) => {
     const { order_id } = req.params;
 
     if (!order_id) {
-      return res.status(400).json({ error: "order_id is required" });
+      return res.status(400).json({ success: false, error: "order_id is required" });
     }
 
-    // 1️⃣ Get the delivery fee from orders table
+    // 1️⃣ Fetch order details
     const [order] = await sql`
       SELECT user_id, delivery_fee, name, email, phone_number
       FROM orders
@@ -108,27 +108,28 @@ exports.initiateDeliveryPayment = async (req, res) => {
     `;
 
     if (!order) {
-      return res.status(404).json({ error: "Order not found" });
+      return res.status(404).json({ success: false, error: "Order not found" });
     }
 
     const amount = Number(order.delivery_fee);
     if (!amount || amount <= 0) {
-      return res.status(400).json({ error: "Delivery fee is missing or invalid" });
+      return res.status(400).json({ success: false, error: "Delivery fee is missing or invalid" });
     }
 
-    // 2️⃣ Generate tx_ref
+    // 2️⃣ Generate unique tx_ref
     const tx_ref = `delivery-${Date.now()}-${uuidv4()}`;
 
-    // 3️⃣ Build Flutterwave payment payload (same as CartScreen)
+    // 3️⃣ Build Flutterwave payload
     const payload = {
       tx_ref,
       amount: Number(amount.toFixed(2)),
       currency: "NGN",
-      redirect_url: "oluwoflomobile://payment-success",
+      // Use backend endpoint to verify instead of in-app redirect
+      redirect_url: `${process.env.BACKEND_URL}/api/delivery/${tx_ref}/verify`,
       customer: {
         email: order.email || "zoyaprocurementcompany@gmail.com",
         name: order.name || "Customer",
-        phonenumber: order.phone_number || "08000000000",
+        phonenumber: String(order.phone_number || "08000000000").replace(/\D/g, ""), // numeric only
       },
       customizations: {
         title: "Zoya Delivery Payment",
@@ -138,7 +139,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
 
     console.log("🟢 [initiateDeliveryPayment] Payload:", payload);
 
-    // 4️⃣ Call Flutterwave API (same endpoint as CartScreen)
+    // 4️⃣ Call Flutterwave API
     const fwRes = await axios.post(
       "https://api.flutterwave.com/v3/payments",
       payload,
@@ -153,22 +154,23 @@ exports.initiateDeliveryPayment = async (req, res) => {
     if (!fwRes.data || fwRes.data.status !== "success") {
       console.error("❌ Flutterwave rejected:", fwRes.data);
       return res.status(400).json({
+        success: false,
         error: fwRes.data?.message || "Flutterwave error",
         details: fwRes.data,
       });
     }
 
-    // 5️⃣ Save payment record locally (optional)
+    // 5️⃣ Save payment record
     await sql`
       INSERT INTO payments (
-        order_id, user_id, amount, status, tx_ref, payment_type, payment_method, currency
+        order_id, user_id, amount, status, tx_ref, payment_type, payment_method, currency, created_at
       ) VALUES (
         ${order_id}, ${order.user_id}, ${amount}, 'pending',
-        ${tx_ref}, 'delivery_fee', 'flutterwave', 'NGN'
+        ${tx_ref}, 'delivery_fee', 'flutterwave', 'NGN', NOW()
       );
     `;
 
-    // 6️⃣ Return payment link to client for WebView modal
+    // 6️⃣ Return payment URL to app for WebView modal
     return res.json({
       success: true,
       message: "Delivery payment initialized",
@@ -177,8 +179,8 @@ exports.initiateDeliveryPayment = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ Delivery Payment Error:", err);
-    return res.status(500).json({ error: "Server error" });
+    console.error("❌ [initiateDeliveryPayment] Error:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, error: "Server error initializing delivery payment" });
   }
 };
 
