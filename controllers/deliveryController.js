@@ -2,6 +2,8 @@
 const { sql } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 const flutterwave = require('../utils/flutterwave');
+const axios = require('axios');
+
 
 /**
  * STEP 1: Admin creates a pending delivery and triggers buyer payment
@@ -95,81 +97,49 @@ exports.initiateDeliveryPayment = async (req, res) => {
   try {
     const { order_id } = req.params;
 
-    console.log("🔵 initiateDeliveryPayment CALLED with order_id:", order_id);
+    console.log("===== 🟢 initiateDeliveryPayment CALLED =====");
+    console.log("➡️ Received order_id:", order_id);
 
     if (!order_id) {
-      console.log("❌ Missing order_id");
-      return res.status(400).json({ success: false, error: "order_id is required" });
+      return res.status(400).json({ error: "order_id is required" });
     }
 
-    // ================================
-    // 1️⃣ Fetch ORDER + CUSTOMER details
-    // ================================
-    console.log("🔍 Fetching order details...");
-    const [order] = await sql`
-      SELECT user_id, name, email, phone_number
-      FROM orders
-      WHERE id = ${order_id}
-      LIMIT 1;
-    `;
-
-    console.log("🟡 ORDER DATA:", order);
-
-    if (!order) {
-      console.log("❌ Order not found");
-      return res.status(404).json({ success: false, error: "Order not found" });
-    }
-
-    // ================================
-    // 2️⃣ Fetch DELIVERY info from deliveries table
-    // ================================
-    console.log("🔍 Fetching delivery fee from deliveries table...");
+    // Fetch delivery info from deliveries table
+    console.log("➡️ Fetching delivery info for order:", order_id);
     const [delivery] = await sql`
-      SELECT delivery_fee
-      FROM deliveries
-      WHERE order_id = ${order_id}
+      SELECT d.delivery_fee, d.courier_id, d.status, o.user_id, o.name, o.email, o.phone_number
+      FROM deliveries d
+      JOIN orders o ON o.id = d.order_id
+      WHERE d.order_id = ${order_id} AND d.status = 'pending'
       LIMIT 1;
     `;
-
-    console.log("🟡 DELIVERY DATA:", delivery);
 
     if (!delivery) {
-      console.log("❌ No delivery record for this order");
-      return res.status(404).json({
-        success: false,
-        error: "Delivery record not found for this order",
-      });
+      console.log("❌ No pending delivery found for this order");
+      return res.status(404).json({ error: "No pending delivery found for this order" });
     }
+
+    console.log("🟡 Delivery record fetched:", delivery);
 
     const amount = Number(delivery.delivery_fee);
-    console.log("💰 Delivery Amount:", amount);
-
     if (!amount || amount <= 0) {
       console.log("❌ Invalid delivery fee:", delivery.delivery_fee);
-      return res.status(400).json({
-        success: false,
-        error: "Delivery fee is missing or invalid",
-      });
+      return res.status(400).json({ error: "Delivery fee is missing or invalid" });
     }
 
-    // ================================
-    // 3️⃣ Create tx_ref
-    // ================================
     const tx_ref = `delivery-${Date.now()}-${uuidv4()}`;
-    console.log("🧾 Generated tx_ref:", tx_ref);
+    console.log("➡️ Generated tx_ref:", tx_ref);
 
-    // ================================
-    // 4️⃣ Build FLUTTERWAVE Payload
-    // ================================
+    // Build Flutterwave payload for in-app modal
     const payload = {
       tx_ref,
       amount: Number(amount.toFixed(2)),
       currency: "NGN",
-      redirect_url: `${process.env.BACKEND_URL}/api/delivery/${tx_ref}/verify`,
+      redirect_url: "oluwoflomobile://payment-success", // deep link for in-app modal
       customer: {
-        email: order.email || "zoyaprocurementcompany@gmail.com",
-        name: order.name || "Customer",
-        phonenumber: String(order.phone_number || "08000000000").replace(/\D/g, ""),
+        email: delivery.email || "zoyaprocurementcompany@gmail.com",
+        name: delivery.name || "Customer",
+        phonenumber: String(delivery.phone_number || "08000000000").replace(/\D/g, ""),
       },
       customizations: {
         title: "Zoya Delivery Payment",
@@ -177,12 +147,10 @@ exports.initiateDeliveryPayment = async (req, res) => {
       },
     };
 
-    console.log("🟢 FINAL FLUTTERWAVE PAYLOAD:", payload);
+    console.log("🟢 Constructed Flutterwave Payload:", payload);
 
-    // ================================
-    // 5️⃣ Call Flutterwave
-    // ================================
-    console.log("🌍 Sending request to Flutterwave...");
+    // Send request to Flutterwave
+    console.log("➡️ Sending payload to Flutterwave...");
     const fwRes = await axios.post(
       "https://api.flutterwave.com/v3/payments",
       payload,
@@ -194,48 +162,43 @@ exports.initiateDeliveryPayment = async (req, res) => {
       }
     );
 
-    console.log("🟢 Flutterwave raw response:", fwRes.data);
+    console.log("🟢 Flutterwave response:", fwRes.data);
 
     if (!fwRes.data || fwRes.data.status !== "success") {
       console.log("❌ Flutterwave rejected:", fwRes.data);
       return res.status(400).json({
-        success: false,
         error: fwRes.data?.message || "Flutterwave error",
         details: fwRes.data,
       });
     }
 
-    // ================================
-    // 6️⃣ Insert Payment Record
-    // ================================
-    console.log("💾 Saving payment record...");
+    // Save payment record
     await sql`
       INSERT INTO payments (
         order_id, user_id, amount, status, tx_ref,
         payment_type, payment_method, currency, created_at
-      ) VALUES (
-        ${order_id}, ${order.user_id}, ${amount}, 'pending',
+      )
+      VALUES (
+        ${order_id}, ${delivery.user_id}, ${amount}, 'pending',
         ${tx_ref}, 'delivery_fee', 'flutterwave', 'NGN', NOW()
       );
     `;
 
-    console.log("✅ Payment record inserted successfully!");
+    console.log("✅ Payment record saved successfully");
 
-    // ================================
-    // 7️⃣ Return Payment URL
-    // ================================
     return res.json({
       success: true,
       message: "Delivery payment initialized",
-      payment_url: fwRes.data.data.link,
+      payment_link: fwRes.data.data.link, // this is the modal URL for the app
       tx_ref,
     });
 
   } catch (err) {
-    console.log("❌ [initiateDeliveryPayment] ERROR:", err.response?.data || err.message);
-    return res.status(500).json({ success: false, error: "Server error initializing delivery payment" });
+    console.error("❌ [initiateDeliveryPayment] ERROR:", err.response?.data || err.message);
+    return res.status(500).json({ error: "Server error initializing delivery payment" });
   }
 };
+
 
 /**
  * STEP 3: Manual (admin) finalization after payment
