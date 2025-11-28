@@ -1,30 +1,49 @@
-// routes/deliveryRouter.js
 const express = require('express');
 const router = express.Router();
 const deliveryController = require('../controllers/deliveryController');
 const { verifyToken } = require('../middleware/auth');
 
-// 🧾 Create a new pending delivery (admin action)
-router.post('/create', verifyToken, deliveryController.createPendingDelivery);
+/**
+ * 1️⃣ Create a new pending delivery (Admin)
+ * POST /api/delivery
+ */
+router.post('/', verifyToken, deliveryController.createPendingDelivery);
 
-// 📦 Get pending delivery by order_id (buyer/admin)
-router.get('/pending/:order_id', verifyToken, deliveryController.getPendingDeliveryByOrder);
+/**
+ * 2️⃣ Get pending delivery by order_id
+ * GET /api/delivery/:order_id/pending
+ */
+router.get('/:order_id/pending', verifyToken, deliveryController.getOrderAndDeliveryDetails); 
+// You can optionally have a separate getPendingDeliveryByOrder if you want only 'pending' delivery
 
-// 💳 Initiate Flutterwave payment for delivery fee
-router.get('/pending/:order_id/pay', verifyToken, deliveryController.initiateDeliveryPayment);
+/**
+ * 3️⃣ Initiate Flutterwave payment for delivery fee
+ * POST /api/delivery/:order_id/pay
+ */
+router.post('/:order_id/pay', verifyToken, deliveryController.initiateDeliveryPayment);
 
-// ✅ Callback route that Flutterwave redirects to after payment
-// This does NOT require verifyToken, because Flutterwave servers will call it
+/**
+ * 4️⃣ Flutterwave callback (public, no token)
+ * GET /api/delivery/payment/callback?transaction_id=...
+ */
 router.get('/payment/callback', deliveryController.flutterwavePaymentCallback);
 
-router.get('/order/:order_id/details', deliveryController.getOrderAndDeliveryDetails);
+/**
+ * 5️⃣ Verify delivery payment manually (Frontend)
+ * GET /api/delivery/:order_id/verify?transaction_id=...
+ */
+router.get('/:order_id/verify', verifyToken, deliveryController.verifyDeliveryPayment);
 
-router.get("/delivery/verify/:orderId", deliveryController.verifyDeliveryPayment);
+/**
+ * 6️⃣ Get order + delivery details
+ * GET /api/delivery/:order_id/details
+ */
+router.get('/:order_id/details', verifyToken, deliveryController.getOrderAndDeliveryDetails);
 
-
-
-
-// 🚚 Finalize delivery manually (admin-triggered only, optional)
-router.post('/finalize', verifyToken, deliveryController.finalizeDeliveryAfterPayment);
+/**
+ * 7️⃣ (Optional) Finalize delivery manually (Admin)
+ * POST /api/delivery/finalize
+ */
+router.post('/finalize', verifyToken, deliveryController.finalizeDeliveryAfterPaymentAuto);
 
 module.exports = router;
