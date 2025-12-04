@@ -193,13 +193,19 @@ exports.finalizeDeliveryAfterPaymentAuto = async (orderId) => {
  */
 exports.flutterwavePaymentCallback = async (req, res) => {
   try {
-    const { tx_ref } = req.query;
+    let tx_ref = req.query.tx_ref;
     if (!tx_ref) return res.status(400).send('Missing tx_ref');
+
+    // Trim whitespace/newlines
+    tx_ref = tx_ref.trim();
 
     const verifyRes = await axios.get(
       `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`,
       { headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` } }
     );
+
+    // ...rest of your code
+
 
     const verification = verifyRes.data?.data;
     if (!verification || verification.status !== 'successful') return res.status(400).send('Payment failed or invalid');
