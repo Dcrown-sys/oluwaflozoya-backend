@@ -13,15 +13,10 @@ router.get('/pending/:order_id', verifyToken, deliveryController.getPendingDeliv
 // 💳 Initiate Flutterwave payment for delivery fee
 router.post('/:order_id/pay', verifyToken, deliveryController.initiateDeliveryPayment);
 
-router.get('/payment/callback', deliveryController.flutterwavePaymentCallback);
+// 🔄 Flutterwave redirect after successful payment
+router.get('/payment-success', deliveryController.flutterwavePaymentCallback);
 
-// 📌 Verify delivery payment manually (Frontend)
-router.get('/delivery/verify/:orderId', deliveryController.verifyDeliveryPayment);
-
-// 📦 Get order + delivery details
-router.get('/order/:order_id/details', deliveryController.getOrderAndDeliveryDetails);
-
-// 🚚 Finalize delivery manually (admin-triggered only, optional)
-router.post('/finalize', verifyToken, deliveryController.finalizeDeliveryAfterPaymentAuto);
+// 📦 Get full order + delivery + courier + items details
+router.get('/order/:order_id/details', verifyToken, deliveryController.getOrderAndDeliveryDetails);
 
 module.exports = router;
