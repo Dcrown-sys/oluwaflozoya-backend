@@ -103,7 +103,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
       tx_ref,
       amount: Number(amount.toFixed(2)),
       currency: "NGN",
-      redirect_url: "oluwoflomobile://payment-success",
+      redirect_url: "https://oluwaflozoya-backend.onrender.com/api/delivery/payment-success",
       customer: {
         email: delivery.email || "zoyaprocurementcompany@gmail.com",
         name: delivery.name || "Customer",
