@@ -20,6 +20,7 @@ const courierRoutes = require("./routes/courierRoutes");
 const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const flutterwaveWebhook = require('./routes/webhook');
 
 
 const app = express();
@@ -37,11 +38,13 @@ adminController.initSocketIO(io);
 
 // ======== MIDDLEWARE ========
 
-// Raw body ONLY for Flutterwave webhook
-app.use('/api/admin/flutterwave-webhook', express.raw({ type: 'application/json' }));
+app.use('/api/flutterwave', flutterwaveWebhook);
+// app.use('/api/admin/flutterwave-webhook', express.raw({ type: 'application/json' }));
 
 // Standard middleware
 app.use(cors());
+
+
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use("/api/geocode", geocodeRoutes);
@@ -56,6 +59,8 @@ app.use("/api/couriers", courierRoutes);
 app.use("/api/delivery", deliveryRoutes);
 app.use("/api/courier-switch", courierSwitchRoutes)
 app.use('/api/order', orderRoutes);
+
+
 
 
 // ======== SOCKET.IO REAL-TIME ========
