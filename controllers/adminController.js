@@ -2198,24 +2198,36 @@ exports.saveFcmToken = async (req, res) => {
 
 
 
+// controllers/courierController.js
+
 exports.getCourierDashboard = async (req, res) => {
   try {
-    const courierId = req.params.courierId;
+    // Step 1: Accept user ID from frontend
+    const userId = req.params.courierId; // frontend is sending user.id
 
-    if (!courierId) {
-      return res.status(400).json({ success: false, message: "Courier ID required" });
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID required" });
     }
 
     // Validate UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(courierId)) {
+    if (!uuidRegex.test(userId)) {
       return res.status(400).json({ success: false, message: "Invalid UUID" });
     }
 
-    // Helper: fetch orders by status
+    // Step 2: Get courier ID from user ID
+    const [courier] = await sql`
+      SELECT id FROM couriers WHERE user_id = ${userId}
+    `;
+    if (!courier) {
+      return res.status(404).json({ success: false, message: "Courier not found" });
+    }
+    const courierId = courier.id;
+
+    // Step 3: Helper to fetch orders by status
     const getOrdersByStatus = async (status) => {
       if (status === "assigned") {
-        // Only show assigned orders where delivery fee is paid
+        // Only include orders where delivery fee is paid
         const orders = await sql`
           SELECT
             o.id AS order_id,
@@ -2232,11 +2244,15 @@ exports.getCourierDashboard = async (req, res) => {
             u.phone AS user_phone
           FROM orders o
           JOIN users u ON o.user_id = u.id
-          JOIN payments p ON p.order_id = o.id AND p.payment_type = 'delivery_fee' AND p.status = 'completed'
+          JOIN payments p 
+            ON p.order_id = o.id 
+           AND p.payment_type = 'delivery_fee' 
+           AND p.status = 'completed'
           WHERE o.courier_id = ${courierId}
             AND o.status = ${status}
           ORDER BY o.updated_at DESC
         `;
+        // Fetch order items
         for (let order of orders) {
           const items = await sql`
             SELECT
@@ -2254,7 +2270,7 @@ exports.getCourierDashboard = async (req, res) => {
         }
         return orders;
       } else {
-        // For other statuses, just fetch from orders table
+        // For in_progress, delivered, cancelled
         const orders = await sql`
           SELECT
             o.id AS order_id,
@@ -2275,6 +2291,7 @@ exports.getCourierDashboard = async (req, res) => {
             AND o.status = ${status}
           ORDER BY o.updated_at DESC
         `;
+        // Fetch order items
         for (let order of orders) {
           const items = await sql`
             SELECT
@@ -2294,12 +2311,13 @@ exports.getCourierDashboard = async (req, res) => {
       }
     };
 
+    // Step 4: Fetch orders by status
     const assignedOrders = await getOrdersByStatus("assigned");
     const inProgressOrders = await getOrdersByStatus("en_route");
     const completedOrders = await getOrdersByStatus("delivered");
     const cancelledOrders = await getOrdersByStatus("cancelled");
 
-    // Stats
+    // Step 5: Stats
     const [stats] = await sql`
       SELECT
         COALESCE(SUM(o.fee + o.bonus), 0) AS earnings,
@@ -2310,6 +2328,7 @@ exports.getCourierDashboard = async (req, res) => {
       WHERE o.courier_id = ${courierId}
     `;
 
+    // Step 6: Send response
     res.json({
       success: true,
       assignedOrders,
@@ -2329,6 +2348,7 @@ exports.getCourierDashboard = async (req, res) => {
     res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
   }
 };
+
 
   
 
