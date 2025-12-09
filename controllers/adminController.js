@@ -2200,35 +2200,28 @@ exports.saveFcmToken = async (req, res) => {
 
 // controllers/courierController.js
 
+// controllers/courierController.js
+
 exports.getCourierDashboard = async (req, res) => {
   try {
-    // Step 1: Accept user ID from frontend
-    const userId = req.params.courierId; // frontend is sending user.id
+    // Step 1: Accept courier ID directly from frontend
+    const courierId = req.params.courierId; // frontend must send courier.id
 
-    if (!userId) {
-      return res.status(400).json({ success: false, message: "User ID required" });
+    if (!courierId) {
+      return res.status(400).json({ success: false, message: "Courier ID required" });
     }
 
     // Validate UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(userId)) {
+    if (!uuidRegex.test(courierId)) {
       return res.status(400).json({ success: false, message: "Invalid UUID" });
     }
 
-    // Step 2: Get courier ID from user ID
-    const [courier] = await sql`
-      SELECT id FROM couriers WHERE user_id = ${userId}
-    `;
-    if (!courier) {
-      return res.status(404).json({ success: false, message: "Courier not found" });
-    }
-    const courierId = courier.id;
-
-    // Step 3: Helper to fetch orders by status
+    // Step 2: Helper function to fetch orders by status
     const getOrdersByStatus = async (status) => {
-      if (status === "assigned") {
-        // Only include orders where delivery fee is paid
-        const orders = await sql`
+      // For "assigned", only include orders with delivery fee paid
+      const orders = status === "assigned"
+        ? await sql`
           SELECT
             o.id AS order_id,
             o.status,
@@ -2251,27 +2244,8 @@ exports.getCourierDashboard = async (req, res) => {
           WHERE o.courier_id = ${courierId}
             AND o.status = ${status}
           ORDER BY o.updated_at DESC
-        `;
-        // Fetch order items
-        for (let order of orders) {
-          const items = await sql`
-            SELECT
-              oi.id AS order_item_id,
-              oi.product_id,
-              p.name AS product_name,
-              oi.quantity,
-              oi.unit_price,
-              oi.total_price
-            FROM order_items oi
-            JOIN products p ON oi.product_id = p.id
-            WHERE oi.order_id = ${order.order_id}
-          `;
-          order.items = items;
-        }
-        return orders;
-      } else {
-        // For in_progress, delivered, cancelled
-        const orders = await sql`
+        `
+        : await sql`
           SELECT
             o.id AS order_id,
             o.status,
@@ -2291,33 +2265,34 @@ exports.getCourierDashboard = async (req, res) => {
             AND o.status = ${status}
           ORDER BY o.updated_at DESC
         `;
-        // Fetch order items
-        for (let order of orders) {
-          const items = await sql`
-            SELECT
-              oi.id AS order_item_id,
-              oi.product_id,
-              p.name AS product_name,
-              oi.quantity,
-              oi.unit_price,
-              oi.total_price
-            FROM order_items oi
-            JOIN products p ON oi.product_id = p.id
-            WHERE oi.order_id = ${order.order_id}
-          `;
-          order.items = items;
-        }
-        return orders;
+
+      // Fetch order items for each order
+      for (let order of orders) {
+        const items = await sql`
+          SELECT
+            oi.id AS order_item_id,
+            oi.product_id,
+            p.name AS product_name,
+            oi.quantity,
+            oi.unit_price,
+            oi.total_price
+          FROM order_items oi
+          JOIN products p ON oi.product_id = p.id
+          WHERE oi.order_id = ${order.order_id}
+        `;
+        order.items = items;
       }
+
+      return orders;
     };
 
-    // Step 4: Fetch orders by status
+    // Step 3: Fetch orders by status
     const assignedOrders = await getOrdersByStatus("assigned");
     const inProgressOrders = await getOrdersByStatus("en_route");
     const completedOrders = await getOrdersByStatus("delivered");
     const cancelledOrders = await getOrdersByStatus("cancelled");
 
-    // Step 5: Stats
+    // Step 4: Stats
     const [stats] = await sql`
       SELECT
         COALESCE(SUM(o.fee + o.bonus), 0) AS earnings,
@@ -2328,7 +2303,7 @@ exports.getCourierDashboard = async (req, res) => {
       WHERE o.courier_id = ${courierId}
     `;
 
-    // Step 6: Send response
+    // Step 5: Send response
     res.json({
       success: true,
       assignedOrders,
