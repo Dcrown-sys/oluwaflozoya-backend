@@ -156,7 +156,9 @@ router.get('/couriers/available', verifyAdmin, adminController.availableCouriers
 router.get('/couriers/nearest/:orderId', verifyAdmin, adminController.nearestCourier);
 router.get('/tracking/nearest-couriers', verifyAdmin, adminController.getNearestCouriers);
 
-router.get('/courier/:courierId/dashboard', verifyCourier, adminController.getCourierDashboard);
+router.get('/dashboard/:courierId', verifyCourier, adminController.getCourierDashboard);
+
+
 router.post('/delivery/:delivery_id/pickup', verifyCourier, adminController.courierPickupOrder);
 router.post('/delivery/:delivery_id/deliver', verifyCourier, adminController.courierDeliverOrder);
 router.patch('/courier/deliveries/:deliveryId/status', adminController.updateDeliveryStatus);

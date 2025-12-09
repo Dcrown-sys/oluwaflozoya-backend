@@ -2196,111 +2196,140 @@ exports.saveFcmToken = async (req, res) => {
 
 
 
- // Correct controller
- exports.getCourierDashboard = async (req, res) => {
-    try {
-      const courierId = req.params.courierId;
-      if (!courierId) return res.status(400).json({ success: false, message: "Courier ID required" });
-  
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (!uuidRegex.test(courierId)) return res.status(400).json({ success: false, message: "Invalid UUID" });
-  
-      // Helper: fetch deliveries by status
-      const getDeliveriesByStatus = async (statusFilter) => {
-        const deliveries = await sql`
+
+
+exports.getCourierDashboard = async (req, res) => {
+  try {
+    const courierId = req.params.courierId;
+
+    if (!courierId) {
+      return res.status(400).json({ success: false, message: "Courier ID required" });
+    }
+
+    // Validate UUID
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(courierId)) {
+      return res.status(400).json({ success: false, message: "Invalid UUID" });
+    }
+
+    // Helper: fetch orders by status
+    const getOrdersByStatus = async (status) => {
+      if (status === "assigned") {
+        // Only show assigned orders where delivery fee is paid
+        const orders = await sql`
           SELECT
-            d.id AS delivery_id,
-            d.order_id,
-            d.status,
-            d.fee,
-            d.bonus,
-            d.points_awarded,
-            d.courier_rating,
-            d.eta,
-            d.eta_minutes,
-            d.distance_km,
-            d.assigned_at,
-            d.picked_up_at,
-            d.delivered_at,
-            d.cancelled_at,
-            d.cancel_reason,
-            d.last_location,
-            d.pickup_address,
-            d.pickup_latitude AS pickup_lat,
-            d.pickup_longitude AS pickup_lng,
-            d.dropoff_address,
-            d.dropoff_latitude AS dropoff_lat,
-            d.dropoff_longitude AS dropoff_lng,
+            o.id AS order_id,
+            o.status,
+            o.delivery_fee,
+            o.fee,
+            o.bonus,
+            o.points_awarded,
+            o.courier_rating,
+            o.pickup_address,
+            o.delivery_address AS dropoff_address,
+            o.distance_km,
             u.full_name AS user_name,
             u.phone AS user_phone
-          FROM deliveries d
-          JOIN orders o ON d.order_id = o.id
+          FROM orders o
           JOIN users u ON o.user_id = u.id
-          WHERE d.courier_id = ${courierId} AND d.status = ${statusFilter}
-          ORDER BY 
-            CASE WHEN ${statusFilter} = 'assigned' THEN d.assigned_at ELSE d.delivered_at END DESC
+          JOIN payments p ON p.order_id = o.id AND p.payment_type = 'delivery_fee' AND p.status = 'completed'
+          WHERE o.courier_id = ${courierId}
+            AND o.status = ${status}
+          ORDER BY o.updated_at DESC
         `;
-  
-        // Attach order items to each delivery
-        for (let delivery of deliveries) {
+        for (let order of orders) {
           const items = await sql`
-            SELECT 
-              oi.id AS item_id, 
-              oi.quantity, 
-              oi.unit_price, 
-              oi.total_price, 
-              p.name AS product_name
+            SELECT
+              oi.id AS order_item_id,
+              oi.product_id,
+              p.name AS product_name,
+              oi.quantity,
+              oi.unit_price,
+              oi.total_price
             FROM order_items oi
             JOIN products p ON oi.product_id = p.id
-            WHERE oi.order_id = ${delivery.order_id}
+            WHERE oi.order_id = ${order.order_id}
           `;
-          delivery.items = items;
-  
-          // Optional: polyline placeholder for frontend
-          delivery.routePolyline = null; // frontend can fetch from Google Directions API
+          order.items = items;
         }
-  
-        return deliveries;
-      };
-  
-      // Fetch deliveries by status
-      const assignedOrders = await getDeliveriesByStatus('assigned');
-      const inProgressOrders = await getDeliveriesByStatus('en_route'); // picked up but not delivered
-      const completedOrders = await getDeliveriesByStatus('delivered');
-      const cancelledOrders = await getDeliveriesByStatus('cancelled');
-  
-      // Stats
-      const [stats] = await sql`
-        SELECT
-          COALESCE(SUM(d.fee + d.bonus),0) AS earnings,
-          COALESCE(SUM(d.points_awarded),0) AS points,
-          COUNT(*) FILTER (WHERE d.status='delivered') AS completedCount,
-          COALESCE(AVG(d.courier_rating),0) AS averageRating
-        FROM deliveries d
-        WHERE d.courier_id = ${courierId}
-      `;
-  
-      res.json({
-        success: true,
-        assignedOrders,
-        inProgressOrders,
-        completedOrders,
-        cancelledOrders,
-        stats: {
-          earnings: Number(stats.earnings),
-          points: Number(stats.points),
-          completedCount: Number(stats.completedcount),
-          averageRating: Number(stats.averagerating),
-        },
-      });
-  
-    } catch (error) {
-      console.error("Error fetching courier dashboard:", error);
-      res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
-    }
-  };
-  
-  
+        return orders;
+      } else {
+        // For other statuses, just fetch from orders table
+        const orders = await sql`
+          SELECT
+            o.id AS order_id,
+            o.status,
+            o.delivery_fee,
+            o.fee,
+            o.bonus,
+            o.points_awarded,
+            o.courier_rating,
+            o.pickup_address,
+            o.delivery_address AS dropoff_address,
+            o.distance_km,
+            u.full_name AS user_name,
+            u.phone AS user_phone
+          FROM orders o
+          JOIN users u ON o.user_id = u.id
+          WHERE o.courier_id = ${courierId}
+            AND o.status = ${status}
+          ORDER BY o.updated_at DESC
+        `;
+        for (let order of orders) {
+          const items = await sql`
+            SELECT
+              oi.id AS order_item_id,
+              oi.product_id,
+              p.name AS product_name,
+              oi.quantity,
+              oi.unit_price,
+              oi.total_price
+            FROM order_items oi
+            JOIN products p ON oi.product_id = p.id
+            WHERE oi.order_id = ${order.order_id}
+          `;
+          order.items = items;
+        }
+        return orders;
+      }
+    };
+
+    const assignedOrders = await getOrdersByStatus("assigned");
+    const inProgressOrders = await getOrdersByStatus("en_route");
+    const completedOrders = await getOrdersByStatus("delivered");
+    const cancelledOrders = await getOrdersByStatus("cancelled");
+
+    // Stats
+    const [stats] = await sql`
+      SELECT
+        COALESCE(SUM(o.fee + o.bonus), 0) AS earnings,
+        COALESCE(SUM(o.points_awarded), 0) AS points,
+        COUNT(*) FILTER (WHERE o.status='delivered') AS completed_count,
+        COALESCE(AVG(o.courier_rating), 0) AS average_rating
+      FROM orders o
+      WHERE o.courier_id = ${courierId}
+    `;
+
+    res.json({
+      success: true,
+      assignedOrders,
+      inProgressOrders,
+      completedOrders,
+      cancelledOrders,
+      stats: {
+        earnings: Number(stats.earnings),
+        points: Number(stats.points),
+        completedCount: Number(stats.completed_count),
+        averageRating: Number(stats.average_rating),
+      },
+    });
+
+  } catch (error) {
+    console.error("Dashboard error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
+  }
+};
+
   
 
   // controllers/deliveries.js
