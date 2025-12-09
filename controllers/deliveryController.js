@@ -3,9 +3,7 @@ const { sql } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 
-/**
- * STEP 1: Admin creates a pending delivery
- */
+
 exports.createPendingDelivery = async (req, res) => {
   try {
     const { courier_id, order_id, pickup_address, dropoff_address, delivery_fee } = req.body;
