@@ -2358,47 +2358,65 @@ exports.getCourierDashboard = async (req, res) => {
   
 
   // controllers/deliveries.js
-exports.pickupOrder = async (req, res) => {
+  exports.pickupOrder = async (req, res) => {
     try {
-      const { orderId, courierId } = req.body;
+      const userId = req.user?.id; // from JWT
+      const { delivery_id } = req.params;
   
-      const order = await sql`SELECT * FROM orders WHERE id = ${orderId}`;
-      if (!order[0]) return res.status(404).json({ message: "Order not found" });
+      if (!userId) return res.status(401).json({ success: false, message: "Invalid user token" });
+      if (!delivery_id) return res.status(400).json({ success: false, message: "Delivery ID required" });
   
-      const pickupLat = order[0].pickup_latitude;
-      const pickupLng = order[0].pickup_longitude;
-      const dropLat = order[0].dropoff_latitude;
-      const dropLng = order[0].dropoff_longitude;
-  
-      // Calculate ETA properly from pickup → dropoff
-      const etaMinutes = calculateEta(
-        { lat: pickupLat, lng: pickupLng },
-        { lat: dropLat, lng: dropLng }
-      );
-  
-      // Update order status
-      await sql`
-        UPDATE orders
-        SET status = 'en_route', updated_at = NOW()
-        WHERE id = ${orderId}
+      // Map user ID to courier ID
+      const [courier] = await sql`
+        SELECT id FROM couriers WHERE user_id = ${userId} LIMIT 1
       `;
   
-      // Update deliveries
+      if (!courier) return res.status(404).json({ success: false, message: "Courier not found for this user" });
+  
+      const courierId = courier.id;
+  
+      // Fetch delivery info
+      const [delivery] = await sql`
+        SELECT d.id AS delivery_id,
+               d.order_id,
+               d.status,
+               d.pickup_address,
+               d.dropoff_address
+        FROM deliveries d
+        WHERE d.id = ${delivery_id}
+        AND d.courier_id = ${courierId}
+      `;
+  
+      if (!delivery) return res.status(404).json({ success: false, message: "Delivery not found" });
+  
+      if (delivery.status !== "pending") {
+        return res.status(400).json({ success: false, message: `Cannot pick up delivery with status: ${delivery.status}` });
+      }
+  
+      // Update delivery
       await sql`
         UPDATE deliveries
-        SET status = 'en_route', picked_up_at = NOW(), eta_minutes = ${etaMinutes}
-        WHERE order_id = ${orderId} AND courier_id = ${courierId}
+        SET status = 'picked_up', picked_up_at = now()
+        WHERE id = ${delivery_id}
+      `;
+  
+      // Update order table
+      await sql`
+        UPDATE orders
+        SET status = 'picked_up', updated_at = now()
+        WHERE id = ${delivery.order_id}
       `;
   
       res.json({
-        message: "Order picked up, trip started",
-        etaMinutes,
-        pickup: { lat: pickupLat, lng: pickupLng },
-        dropoff: { lat: dropLat, lng: dropLng },
+        success: true,
+        message: "Order picked up successfully",
+        pickup_address: delivery.pickup_address,
+        dropoff_address: delivery.dropoff_address
       });
+  
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: "Failed to pick up order" });
+      console.error("Pickup error:", err);
+      res.status(500).json({ success: false, message: "Failed to pick up order" });
     }
   };
   
@@ -2598,100 +2616,113 @@ exports.updateDeliveryStatus = async (req, res) => {
     }
   };
 
-  // Mark order as picked up
-  exports.courierPickupOrder = async (req, res) => {
+  // controllers/adminController.js
+  exports.markOrderDelivered = async (req, res) => {
     try {
-      const courierId = req.user?.id; // from JWT
-      const { delivery_id } = req.params;
+      const { order_id } = req.body;
+      const userId = req.user.id; // this is users.id, NOT couriers.id
   
-      if (!courierId) return res.status(401).json({ success: false, message: 'Invalid courier token' });
-      if (!delivery_id) return res.status(400).json({ success: false, message: 'DeliveryId required' });
-  
-      // Fetch delivery info from deliveries table
-      const delivery = await sql`
-        SELECT d.id AS delivery_id,
-               d.order_id,
-               d.status AS delivery_status,
-               d.pickup_latitude,
-               d.pickup_longitude,
-               d.dropoff_latitude,
-               d.dropoff_longitude
-        FROM deliveries d
-        WHERE d.id = ${delivery_id} AND d.courier_id = ${courierId}
+      // 1. Map user → courier ID
+      const courierRow = await sql`
+        SELECT id 
+        FROM couriers 
+        WHERE user_id = ${userId}
+        LIMIT 1;
       `;
   
-      if (!delivery[0]) return res.status(404).json({ success: false, message: 'Delivery not found' });
-  
-      const d = delivery[0];
-  
-      if (d.delivery_status !== 'assigned') {
-        return res.status(400).json({ success: false, message: `Cannot pick up delivery with status ${d.delivery_status}` });
+      if (courierRow.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Courier account not found'
+        });
       }
   
-      // Update deliveries table
+      const courierId = courierRow[0].id;
+  
+      // 2. Verify this courier is assigned to this order
+      const deliveryCheck = await sql`
+        SELECT id, status
+        FROM deliveries
+        WHERE order_id = ${order_id}
+        AND courier_id = ${courierId}
+        LIMIT 1;
+      `;
+  
+      if (deliveryCheck.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized for this delivery'
+        });
+      }
+  
+      // 3. Update to delivered
       await sql`
         UPDATE deliveries
-        SET status = 'en_route', picked_up_at = now()
-        WHERE id = ${d.delivery_id} AND courier_id = ${courierId}
+        SET status = 'delivered',
+            delivered_at = NOW()
+        WHERE order_id = ${order_id}
+        AND courier_id = ${courierId};
       `;
   
-      // Optionally update the order status too
-      await sql`
-        UPDATE orders
-        SET status = 'en_route', updated_at = now()
-        WHERE id = ${d.order_id}
-      `;
-  
-      // Google Directions API
-      const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${d.pickup_latitude},${d.pickup_longitude}&destination=${d.dropoff_latitude},${d.dropoff_longitude}&key=${GOOGLE_KEY}`;
-      const directionsRes = await axios.get(directionsUrl);
-      const routeData = directionsRes.data;
-  
-      const etaMinutes = routeData?.routes?.[0]?.legs?.[0]?.duration?.value
-        ? Math.ceil(routeData.routes[0].legs[0].duration.value / 60)
-        : null;
-  
-      const polylinePoints = routeData?.routes?.[0]?.overview_polyline?.points
-        ? decodePolyline(routeData.routes[0].overview_polyline.points)
-        : [];
-  
-      res.json({
+      return res.status(200).json({
         success: true,
-        message: 'Delivery picked up, trip started',
-        etaMinutes,
-        pickup: { lat: d.pickup_latitude, lng: d.pickup_longitude },
-        dropoff: { lat: d.dropoff_latitude, lng: d.dropoff_longitude },
-        routePolyline: polylinePoints,
+        message: 'Order marked as delivered successfully'
       });
   
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ success: false, message: 'Failed to pick up delivery', error: err.message });
+    } catch (error) {
+      console.error('Mark delivered error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Server error'
+      });
+    }
+  };
+
+  exports.getMyDeliveries = async (req, res) => {
+    try {
+      const courierUserId = req.user.id;
+  
+      // 1. Find the courier record using user_id
+      const courierRow = await sql`
+        SELECT id FROM couriers
+        WHERE user_id = ${courierUserId}
+      `;
+  
+      if (courierRow.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Courier not found for this user"
+        });
+      }
+  
+      const courierId = courierRow[0].id; // THIS is the real courier_id
+  
+      // 2. Fetch assigned deliveries
+      const deliveries = await sql`
+        SELECT 
+          d.id,
+          d.order_id,
+          d.status,
+          d.pickup_address,
+          d.dropoff_address
+        FROM deliveries d
+        JOIN orders o ON o.id = d.order_id
+        WHERE d.courier_id = ${courierId}
+        AND d.status IN ('pending', 'picked_up')
+        ORDER BY d.created_at DESC
+      `;
+  
+      return res.json({
+        success: true,
+        deliveries
+      });
+  
+    } catch (error) {
+      console.error("Courier Delivery Error:", error);
+      return res.status(500).json({ success: false, message: "Server error" });
     }
   };
   
-  // Helper: decode Google polyline
-  function decodePolyline(encoded) {
-    let points = [];
-    let index = 0, len = encoded.length;
-    let lat = 0, lng = 0;
-  
-    while (index < len) {
-      let b, shift = 0, result = 0;
-      do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-      let dlat = (result & 1) ? ~(result >> 1) : result >> 1;
-      lat += dlat;
-  
-      shift = 0; result = 0;
-      do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-      let dlng = (result & 1) ? ~(result >> 1) : result >> 1;
-      lng += dlng;
-  
-      points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
-    }
-  
-    return points;
-  }
   
 
   // Mark order as delivered
