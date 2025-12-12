@@ -2202,140 +2202,85 @@ exports.saveFcmToken = async (req, res) => {
 
 exports.getCourierDashboard = async (req, res) => {
   try {
-    // Step 1: Accept user ID from frontend (from login)
-    const userId = req.params.courierId; // frontend is sending user.id
-
-    if (!userId) {
-      return res.status(400).json({ success: false, message: "User ID required" });
-    }
+    const userId = req.params.courierId;
+    if (!userId) return res.status(400).json({ success: false, message: "User ID required" });
 
     // Validate UUID
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(userId)) {
-      return res.status(400).json({ success: false, message: "Invalid UUID" });
-    }
+    if (!uuidRegex.test(userId)) return res.status(400).json({ success: false, message: "Invalid UUID" });
 
-    // Step 2: Get courier ID from user ID
-    const [courier] = await sql`
-      SELECT id FROM couriers WHERE user_id = ${userId}
-    `;
-    if (!courier) {
-      return res.status(404).json({ success: false, message: "Courier not found" });
-    }
+    // Get courier_id from user_id
+    const [courier] = await sql`SELECT id FROM couriers WHERE user_id = ${userId}`;
+    if (!courier) return res.status(404).json({ success: false, message: "Courier not found" });
     const courierId = courier.id;
 
-    // Step 3: Helper to fetch orders by status
-    const getOrdersByStatus = async (status) => {
-      if (status === "pending") {
-        // Pending deliveries: delivery.status = 'pending', order.status = 'en_route', payment completed
-        const orders = await sql`
+    // Helper to fetch deliveries by statuses (array)
+    const getDeliveries = async (statuses) => {
+      const deliveries = await sql`
+        SELECT
+          d.id AS delivery_id,
+          d.order_id,
+          d.status,
+          d.delivery_fee,
+          d.fee,
+          d.bonus,
+          d.points_awarded,
+          d.courier_rating,
+          d.pickup_address,
+          d.dropoff_address,
+          d.distance_km,
+          d.assigned_at,
+          d.picked_up_at,
+          d.delivered_at,
+          u.full_name AS user_name,
+          u.phone AS user_phone
+        FROM deliveries d
+        JOIN orders o ON o.id = d.order_id
+        JOIN users u ON o.user_id = u.id
+        WHERE d.courier_id = ${courierId}
+          AND d.status = ANY(${statuses})
+        ORDER BY d.updated_at DESC
+      `;
+
+      // Attach items to each delivery
+      for (let dItem of deliveries) {
+        const items = await sql`
           SELECT
-            o.id AS order_id,
-            o.status,
-            o.delivery_fee,
-            o.fee,
-            o.bonus,
-            o.points_awarded,
-            o.courier_rating,
-            d.pickup_address,
-            o.delivery_address AS dropoff_address,
-            o.distance_km,
-            u.full_name AS user_name,
-            u.phone AS user_phone
-          FROM deliveries d
-          JOIN orders o ON d.order_id = o.id
-          JOIN users u ON o.user_id = u.id
-          JOIN payments p
-            ON p.order_id = o.id
-           AND p.payment_type = 'delivery_fee'
-           AND p.status = 'completed'
-          WHERE d.courier_id = ${courierId}
-            AND d.status = 'pending'
-            AND o.status = 'en_route'
-          ORDER BY d.created_at DESC
+            oi.id AS order_item_id,
+            oi.product_id,
+            p.name AS product_name,
+            oi.quantity,
+            oi.unit_price,
+            oi.total_price
+          FROM order_items oi
+          JOIN products p ON oi.product_id = p.id
+          WHERE oi.order_id = ${dItem.order_id}
         `;
-
-        // Fetch order items
-        for (let order of orders) {
-          const items = await sql`
-            SELECT
-              oi.id AS order_item_id,
-              oi.product_id,
-              p.name AS product_name,
-              oi.quantity,
-              oi.unit_price,
-              oi.total_price
-            FROM order_items oi
-            JOIN products p ON oi.product_id = p.id
-            WHERE oi.order_id = ${order.order_id}
-          `;
-          order.items = items;
-        }
-
-        return orders;
-      } else {
-        // For in_progress, delivered, cancelled, fetch from orders table
-        const orders = await sql`
-          SELECT
-            o.id AS order_id,
-            o.status,
-            o.delivery_fee,
-            o.fee,
-            o.bonus,
-            o.points_awarded,
-            o.courier_rating,
-            o.pickup_address,
-            o.delivery_address AS dropoff_address,
-            o.distance_km,
-            u.full_name AS user_name,
-            u.phone AS user_phone
-          FROM orders o
-          JOIN users u ON o.user_id = u.id
-          WHERE o.courier_id = ${courierId}
-            AND o.status = ${status}
-          ORDER BY o.updated_at DESC
-        `;
-
-        // Fetch order items
-        for (let order of orders) {
-          const items = await sql`
-            SELECT
-              oi.id AS order_item_id,
-              oi.product_id,
-              p.name AS product_name,
-              oi.quantity,
-              oi.unit_price,
-              oi.total_price
-            FROM order_items oi
-            JOIN products p ON oi.product_id = p.id
-            WHERE oi.order_id = ${order.order_id}
-          `;
-          order.items = items;
-        }
-
-        return orders;
+        dItem.items = items;
       }
+
+      return deliveries;
     };
 
-    // Step 4: Fetch orders by status
-    const pendingOrders = await getOrdersByStatus("pending");
-    const inProgressOrders = await getOrdersByStatus("en_route");
-    const completedOrders = await getOrdersByStatus("delivered");
-    const cancelledOrders = await getOrdersByStatus("cancelled");
+    // Use statuses: pending | enroute (paid awaiting pickup) | in_transit (picked up) | delivered | cancelled
+    const pendingOrders = await getDeliveries(["pending"]);
+    // inProgress: treat both enroute (paid awaiting pickup) and in_transit/picked_up as in-progress
+    const inProgressOrders = await getDeliveries(["enroute", "in_transit", "picked_up"]);
+    const completedOrders = await getDeliveries(["delivered"]);
+    const cancelledOrders = await getDeliveries(["cancelled"]);
 
-    // Step 5: Stats
+    // Stats (based on deliveries table)
     const [stats] = await sql`
       SELECT
-        COALESCE(SUM(o.fee + o.bonus), 0) AS earnings,
-        COALESCE(SUM(o.points_awarded), 0) AS points,
-        COUNT(*) FILTER (WHERE o.status='delivered') AS completed_count,
-        COALESCE(AVG(o.courier_rating), 0) AS average_rating
-      FROM orders o
-      WHERE o.courier_id = ${courierId}
+        COALESCE(SUM(d.fee + d.bonus), 0) AS earnings,
+        COALESCE(SUM(d.points_awarded), 0) AS points,
+        COUNT(*) FILTER (WHERE d.status = 'delivered') AS completed_count,
+        COALESCE(AVG(d.courier_rating), 0) AS average_rating
+      FROM deliveries d
+      WHERE d.courier_id = ${courierId}
     `;
 
-    // Step 6: Send response
-    res.json({
+    return res.json({
       success: true,
       pendingOrders,
       inProgressOrders,
@@ -2348,10 +2293,9 @@ exports.getCourierDashboard = async (req, res) => {
         averageRating: Number(stats.average_rating),
       },
     });
-
   } catch (error) {
     console.error("Dashboard error:", error);
-    res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
+    return res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
   }
 };
 
@@ -2360,65 +2304,63 @@ exports.getCourierDashboard = async (req, res) => {
   // controllers/deliveries.js
   exports.pickupOrder = async (req, res) => {
     try {
-      const userId = req.user?.id; // from JWT
+      const userId = req.user?.id;
       const { delivery_id } = req.params;
   
       if (!userId) return res.status(401).json({ success: false, message: "Invalid user token" });
       if (!delivery_id) return res.status(400).json({ success: false, message: "Delivery ID required" });
   
-      // Map user ID to courier ID
-      const [courier] = await sql`
-        SELECT id FROM couriers WHERE user_id = ${userId} LIMIT 1
-      `;
-  
+      // Map user -> courier
+      const [courier] = await sql`SELECT id FROM couriers WHERE user_id = ${userId} LIMIT 1`;
       if (!courier) return res.status(404).json({ success: false, message: "Courier not found for this user" });
-  
       const courierId = courier.id;
   
-      // Fetch delivery info
+      // Fetch delivery
       const [delivery] = await sql`
-        SELECT d.id AS delivery_id,
-               d.order_id,
-               d.status,
-               d.pickup_address,
-               d.dropoff_address
-        FROM deliveries d
-        WHERE d.id = ${delivery_id}
-        AND d.courier_id = ${courierId}
+        SELECT id AS delivery_id, order_id, status, pickup_address, dropoff_address
+        FROM deliveries
+        WHERE id = ${delivery_id}
+          AND courier_id = ${courierId}
+        LIMIT 1
       `;
-  
       if (!delivery) return res.status(404).json({ success: false, message: "Delivery not found" });
   
-      if (delivery.status !== "pending") {
+      // Only allow pickup when buyer has paid (status = 'enroute')
+      if (delivery.status !== "enroute") {
         return res.status(400).json({ success: false, message: `Cannot pick up delivery with status: ${delivery.status}` });
       }
   
-      // Update delivery
+      // Update deliveries -> in_transit (and set picked_up_at)
       await sql`
         UPDATE deliveries
-        SET status = 'picked_up', picked_up_at = now()
+        SET status = 'in_transit',
+            picked_up_at = NOW(),
+            updated_at = NOW()
         WHERE id = ${delivery_id}
+          AND courier_id = ${courierId}
+          AND status = 'enroute'
       `;
   
-      // Update order table
+      // Update orders -> picked_up / in_transit mapping if you use orders.status
       await sql`
         UPDATE orders
-        SET status = 'picked_up', updated_at = now()
+        SET status = 'picked_up',
+            updated_at = NOW()
         WHERE id = ${delivery.order_id}
       `;
   
-      res.json({
+      return res.json({
         success: true,
-        message: "Order picked up successfully",
+        message: "Order marked as picked up (in_transit)",
         pickup_address: delivery.pickup_address,
         dropoff_address: delivery.dropoff_address
       });
-  
     } catch (err) {
       console.error("Pickup error:", err);
-      res.status(500).json({ success: false, message: "Failed to pick up order" });
+      return res.status(500).json({ success: false, message: "Failed to pick up order" });
     }
   };
+  
   
 
 // controllers/deliveryController.js
@@ -2620,103 +2562,88 @@ exports.updateDeliveryStatus = async (req, res) => {
   exports.markOrderDelivered = async (req, res) => {
     try {
       const { order_id } = req.body;
-      const userId = req.user.id; // this is users.id, NOT couriers.id
+      const userId = req.user.id;
   
-      // 1. Map user → courier ID
-      const courierRow = await sql`
-        SELECT id 
-        FROM couriers 
-        WHERE user_id = ${userId}
-        LIMIT 1;
-      `;
+      if (!order_id) return res.status(400).json({ success: false, message: "order_id required" });
   
-      if (courierRow.length === 0) {
-        return res.status(403).json({
-          success: false,
-          message: 'Courier account not found'
-        });
-      }
+      // Map user -> courier id
+      const [courier] = await sql`SELECT id FROM couriers WHERE user_id = ${userId} LIMIT 1`;
+      if (!courier) return res.status(403).json({ success: false, message: "Courier account not found" });
+      const courierId = courier.id;
   
-      const courierId = courierRow[0].id;
-  
-      // 2. Verify this courier is assigned to this order
-      const deliveryCheck = await sql`
+      // Verify courier assigned to this delivery
+      const [delivery] = await sql`
         SELECT id, status
         FROM deliveries
         WHERE order_id = ${order_id}
-        AND courier_id = ${courierId}
-        LIMIT 1;
+          AND courier_id = ${courierId}
+        LIMIT 1
       `;
+      if (!delivery) return res.status(403).json({ success: false, message: "Not authorized for this delivery" });
   
-      if (deliveryCheck.length === 0) {
-        return res.status(403).json({
+      // Only allow delivered from in_transit or picked_up
+      if (!["in_transit", "picked_up"].includes(delivery.status)) {
+        return res.status(400).json({
           success: false,
-          message: 'Not authorized for this delivery'
+          message: `Cannot mark delivered when delivery status is ${delivery.status}`
         });
       }
   
-      // 3. Update to delivered
+      // Update deliveries -> delivered
       await sql`
         UPDATE deliveries
         SET status = 'delivered',
-            delivered_at = NOW()
-        WHERE order_id = ${order_id}
-        AND courier_id = ${courierId};
+            delivered_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ${delivery.id}
       `;
   
-      return res.status(200).json({
-        success: true,
-        message: 'Order marked as delivered successfully'
-      });
+      // Update orders -> delivered
+      await sql`
+        UPDATE orders
+        SET status = 'delivered',
+            delivered_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ${order_id}
+      `;
   
+      // Optionally: compute points/bonus/earnings here (you may already have another function)
+      return res.status(200).json({ success: true, message: 'Order marked as delivered successfully' });
     } catch (error) {
       console.error('Mark delivered error:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Server error'
-      });
+      return res.status(500).json({ success: false, message: 'Server error' });
     }
   };
+  
 
   exports.getMyDeliveries = async (req, res) => {
     try {
       const courierUserId = req.user.id;
+      const courierRow = await sql`SELECT id FROM couriers WHERE user_id = ${courierUserId} LIMIT 1`;
   
-      // 1. Find the courier record using user_id
-      const courierRow = await sql`
-        SELECT id FROM couriers
-        WHERE user_id = ${courierUserId}
-      `;
-  
-      if (courierRow.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Courier not found for this user"
-        });
+      if (!courierRow || courierRow.length === 0) {
+        return res.status(404).json({ success: false, message: "Courier not found for this user" });
       }
+      const courierId = courierRow[0].id;
   
-      const courierId = courierRow[0].id; // THIS is the real courier_id
-  
-      // 2. Fetch assigned deliveries
       const deliveries = await sql`
         SELECT 
           d.id,
           d.order_id,
           d.status,
           d.pickup_address,
-          d.dropoff_address
+          d.dropoff_address,
+          d.delivery_fee,
+          d.picked_up_at,
+          d.delivered_at,
+          d.assigned_at
         FROM deliveries d
-        JOIN orders o ON o.id = d.order_id
         WHERE d.courier_id = ${courierId}
-        AND d.status IN ('pending', 'picked_up')
+          AND d.status IN ('pending', 'enroute', 'in_transit', 'picked_up')
         ORDER BY d.created_at DESC
       `;
   
-      return res.json({
-        success: true,
-        deliveries
-      });
-  
+      return res.json({ success: true, deliveries });
     } catch (error) {
       console.error("Courier Delivery Error:", error);
       return res.status(500).json({ success: false, message: "Server error" });
