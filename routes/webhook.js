@@ -132,6 +132,30 @@ router.post(
       }
     }
 
+    if (
+      ['delivery', 'delivery_fee'].includes(paymentType) &&
+      paymentStatus === 'completed' &&
+      finalOrderId
+    ) {
+      console.log('🚚 Updating delivery status to ENROUTE...');
+    
+      const updated = await sql`
+        UPDATE deliveries
+        SET status = 'enroute',
+            updated_at = NOW()
+        WHERE order_id = ${finalOrderId}
+          AND status = 'pending'
+        RETURNING id, status;
+      `;
+    
+      if (updated.length === 0) {
+        console.warn('⚠️ No pending delivery found to update');
+      } else {
+        console.log('✅ Delivery marked ENROUTE:', updated[0].id);
+      }
+    }
+    
+
     // Notify user via Socket.IO
     if (userId && ioInstance) {
       let message = '';
@@ -164,5 +188,8 @@ router.post(
     return res.status(200).send('Webhook processed successfully');
   }
 );
+
+
+
 
 module.exports = router;
