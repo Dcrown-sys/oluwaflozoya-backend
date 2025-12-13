@@ -19,6 +19,7 @@ router.post(
     console.log('\n===============================');
     console.log('⚡ Incoming Flutterwave Webhook');
     console.log('===============================');
+    
 
     const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
     console.log('🔐 Received signature:', signature);
@@ -141,7 +142,7 @@ router.post(
     
       const updated = await sql`
         UPDATE deliveries
-        SET status = 'enroute',
+        SET status = 'en_route',
             updated_at = NOW()
         WHERE order_id = ${finalOrderId}
           AND status = 'pending'
