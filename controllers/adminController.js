@@ -2203,20 +2203,21 @@ exports.saveFcmToken = async (req, res) => {
 exports.getCourierDashboard = async (req, res) => {
   try {
     const userId = req.params.courierId;
-    if (!userId) return res.status(400).json({ success: false, message: "User ID required" });
 
-    // Validate UUID
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(userId)) return res.status(400).json({ success: false, message: "Invalid UUID" });
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID required" });
+    }
 
-    // Get courier_id from user_id
-    const [courier] = await sql`SELECT id FROM couriers WHERE user_id = ${userId}`;
-    if (!courier) return res.status(404).json({ success: false, message: "Courier not found" });
+    const [courier] = await sql`
+      SELECT id FROM couriers WHERE user_id = ${userId}
+    `;
+    if (!courier) {
+      return res.status(404).json({ success: false, message: "Courier not found" });
+    }
     const courierId = courier.id;
 
-    // Helper to fetch deliveries by statuses (array)
-    const getDeliveries = async (statuses) => {
-      const deliveries = await sql`
+    const fetchByStatus = async (statuses) => {
+      const rows = await sql`
         SELECT
           d.id AS delivery_id,
           d.order_id,
@@ -2225,62 +2226,50 @@ exports.getCourierDashboard = async (req, res) => {
           d.fee,
           d.bonus,
           d.points_awarded,
-          d.courier_rating,
           d.pickup_address,
           d.dropoff_address,
           d.distance_km,
-          d.assigned_at,
-          d.picked_up_at,
-          d.delivered_at,
           u.full_name AS user_name,
           u.phone AS user_phone
         FROM deliveries d
         JOIN orders o ON o.id = d.order_id
         JOIN users u ON o.user_id = u.id
         WHERE d.courier_id = ${courierId}
-          AND d.status = ANY(${statuses})
+        AND d.status = ANY(${statuses})
         ORDER BY d.updated_at DESC
       `;
 
-      // Attach items to each delivery
-      for (let dItem of deliveries) {
-        const items = await sql`
+      for (const row of rows) {
+        row.items = await sql`
           SELECT
-            oi.id AS order_item_id,
             oi.product_id,
             p.name AS product_name,
             oi.quantity,
-            oi.unit_price,
             oi.total_price
           FROM order_items oi
-          JOIN products p ON oi.product_id = p.id
-          WHERE oi.order_id = ${dItem.order_id}
+          JOIN products p ON p.id = oi.product_id
+          WHERE oi.order_id = ${row.order_id}
         `;
-        dItem.items = items;
       }
 
-      return deliveries;
+      return rows;
     };
 
-    // Use statuses: pending | enroute (paid awaiting pickup) | in_transit (picked up) | delivered | cancelled
-    const pendingOrders = await getDeliveries(["pending"]);
-    // inProgress: treat both enroute (paid awaiting pickup) and in_transit/picked_up as in-progress
-    const inProgressOrders = await getDeliveries(["enroute", "in_transit", "picked_up"]);
-    const completedOrders = await getDeliveries(["delivered"]);
-    const cancelledOrders = await getDeliveries(["cancelled"]);
+    const pendingOrders = await fetchByStatus(["enroute"]);
+    const inProgressOrders = await fetchByStatus(["in_transit"]);
+    const completedOrders = await fetchByStatus(["delivered"]);
+    const cancelledOrders = await fetchByStatus(["cancelled"]);
 
-    // Stats (based on deliveries table)
     const [stats] = await sql`
       SELECT
-        COALESCE(SUM(d.fee + d.bonus), 0) AS earnings,
-        COALESCE(SUM(d.points_awarded), 0) AS points,
-        COUNT(*) FILTER (WHERE d.status = 'delivered') AS completed_count,
-        COALESCE(AVG(d.courier_rating), 0) AS average_rating
-      FROM deliveries d
-      WHERE d.courier_id = ${courierId}
+        COALESCE(SUM(fee + bonus), 0) AS earnings,
+        COALESCE(SUM(points_awarded), 0) AS points,
+        COUNT(*) FILTER (WHERE status = 'delivered') AS completed_count
+      FROM deliveries
+      WHERE courier_id = ${courierId}
     `;
 
-    return res.json({
+    res.json({
       success: true,
       pendingOrders,
       inProgressOrders,
@@ -2290,12 +2279,12 @@ exports.getCourierDashboard = async (req, res) => {
         earnings: Number(stats.earnings),
         points: Number(stats.points),
         completedCount: Number(stats.completed_count),
-        averageRating: Number(stats.average_rating),
       },
     });
-  } catch (error) {
-    console.error("Dashboard error:", error);
-    return res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
+
+  } catch (err) {
+    console.error("Courier dashboard error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch courier dashboard" });
   }
 };
 
