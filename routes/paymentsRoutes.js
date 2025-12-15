@@ -3,7 +3,6 @@ const router = express.Router();
 const {
   payOrderDelivery,
   verifyFlutterwaveWebhook,
-  verifyPayment,
   confirmPayment, // ✅ add this
 } = require('../controllers/paymentsController'); // make sure this file exports verifyPayment
 const { verifyBuyer } = require('../middleware/auth');
@@ -12,8 +11,7 @@ const { sql } = require('../db');
 // 🟢 Buyer initiates a new delivery payment (Flutterwave link)
 router.post('/order/:orderId', verifyBuyer, payOrderDelivery);
 
-// 🟢 Verify payment after Flutterwave redirects (for in-app deep link)
-router.get('/verify/:ref', verifyPayment); // ✅ fixed reference
+
 
 // 🟡 Buyer fetches existing delivery payment info
 router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
