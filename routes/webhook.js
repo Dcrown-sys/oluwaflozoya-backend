@@ -63,8 +63,8 @@ router.post(
       }
     }
 
-    const paymentType = data.meta?.payment_type || 'order';
-    console.log('💰 Payment type:', paymentType);
+ 
+
 
     // Determine payment status
     let paymentStatus = 'pending';
@@ -100,6 +100,9 @@ router.post(
     const { user_id: userId } = payment;
     const finalOrderId = orderId || payment.order_id;
     console.log('🔗 Final order_id:', finalOrderId, '| User ID:', userId);
+
+    const paymentType = payment.payment_type;
+    console.log('💰 Payment type (DB):', paymentType);
 
     // Compute new order status
     let orderStatus = 'pending';
@@ -138,23 +141,23 @@ router.post(
       paymentStatus === 'completed' &&
       finalOrderId
     ) {
-      console.log('🚚 Updating delivery status to ENROUTE...');
+      console.log('🚚 Updating delivery status to EN_ROUTE...');
     
       const updated = await sql`
         UPDATE deliveries
         SET status = 'en_route',
             updated_at = NOW()
         WHERE order_id = ${finalOrderId}
-          AND status = 'pending'
         RETURNING id, status;
       `;
     
       if (updated.length === 0) {
-        console.warn('⚠️ No pending delivery found to update');
+        console.warn('⚠️ No delivery found for order:', finalOrderId);
       } else {
-        console.log('✅ Delivery marked ENROUTE:', updated[0].id);
+        console.log('✅ Delivery marked EN_ROUTE:', updated[0]);
       }
     }
+    
     
 
     // Notify user via Socket.IO
