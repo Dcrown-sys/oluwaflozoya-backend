@@ -119,42 +119,43 @@ exports.initiateDeliveryPayment = async (req, res) => {
     const txRef = `delivery-${order_id}-${crypto.randomUUID()}`;
 
     /* =====================================
-       3️⃣ Create or update payment row FIRST
-    ===================================== */
-    const [payment] = await sql`
-      INSERT INTO payments (
-        order_id,
-        user_id,
-        amount,
-        currency,
-        status,
-        payment_type,
-        payment_method,
-        tx_ref,
-        payment_reference,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        ${order_id},
-        ${delivery.user_id},
-        ${amount},
-        'NGN',
-        'pending',
-        'delivery_fee',
-        'flutterwave',
-        ${txRef},
-        ${paymentReference},
-        NOW(),
-        NOW()
-      )
-       ON CONFLICT ON CONSTRAINT unique_delivery_payment
-      DO UPDATE SET
-        tx_ref = EXCLUDED.tx_ref,
-        payment_reference = EXCLUDED.payment_reference,
-        updated_at = NOW()
-      RETURNING *;
-    `;
+   3️⃣ Create or update payment row FIRST
+===================================== */
+const [payment] = await sql`
+INSERT INTO payments (
+  order_id,
+  user_id,
+  amount,
+  currency,
+  status,
+  payment_type,
+  payment_method,
+  tx_ref,
+  payment_reference,
+  created_at,
+  updated_at
+)
+VALUES (
+  ${order_id},
+  ${delivery.user_id},
+  ${amount},
+  'NGN',
+  'pending',
+  'delivery_fee',
+  'flutterwave',
+  ${txRef},
+  ${paymentReference},
+  NOW(),
+  NOW()
+)
+ON CONFLICT (order_id, payment_type)
+DO UPDATE SET
+  tx_ref = EXCLUDED.tx_ref,
+  payment_reference = EXCLUDED.payment_reference,
+  amount = EXCLUDED.amount,
+  updated_at = NOW()
+RETURNING *;
+`;
 
 
     /* =====================================
