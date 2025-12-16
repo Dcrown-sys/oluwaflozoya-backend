@@ -80,13 +80,33 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
  */
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
+
+    /* ======================================================
+       🔍 TEMP DEBUG: CONFIRM WHICH DB THIS REQUEST USES
+    ====================================================== */
+    const [env] = await sql`
+      SELECT
+        current_database()  AS database,
+        inet_server_addr()  AS server_ip,
+        inet_server_port()  AS port,
+        current_user        AS db_user,
+        current_setting('server_version') AS pg_version,
+        current_setting('TimeZone') AS timezone;
+    `;
+    console.log('🧩 BACKEND DB ENV:', env);
+
+    /* ======================================================
+       0️⃣ Validate input
+    ====================================================== */
     const { order_id } = req.params;
 
     if (!order_id) {
       return res.status(400).json({ success: false, message: 'order_id is required' });
     }
 
-    // 1️⃣ Fetch pending delivery
+    /* ======================================================
+       1️⃣ Fetch pending delivery
+    ====================================================== */
     const [delivery] = await sql`
       SELECT
         d.delivery_fee,
@@ -110,11 +130,15 @@ exports.initiateDeliveryPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid delivery fee' });
     }
 
-    // 2️⃣ Generate references
+    /* ======================================================
+       2️⃣ Generate references
+    ====================================================== */
     const paymentReference = `DELIVERY-${order_id}-${Date.now()}`;
     const txRef = `delivery-${order_id}-${crypto.randomUUID()}`;
 
-    // 3️⃣ Check if a delivery payment already exists
+    /* ======================================================
+       3️⃣ Create or update payment row (NO ON CONFLICT)
+    ====================================================== */
     let [payment] = await sql`
       SELECT *
       FROM payments
@@ -124,7 +148,6 @@ exports.initiateDeliveryPayment = async (req, res) => {
     `;
 
     if (!payment) {
-      // 3a️⃣ Insert new payment row
       [payment] = await sql`
         INSERT INTO payments (
           order_id,
@@ -156,7 +179,6 @@ exports.initiateDeliveryPayment = async (req, res) => {
       `;
       console.log(`✅ Created new payment row for order ${order_id}`);
     } else {
-      // 3b️⃣ Update existing payment row
       [payment] = await sql`
         UPDATE payments
         SET
@@ -170,7 +192,9 @@ exports.initiateDeliveryPayment = async (req, res) => {
       console.log(`ℹ️ Updated existing payment row for order ${order_id}`);
     }
 
-    // 4️⃣ Build Flutterwave payload
+    /* ======================================================
+       4️⃣ Build Flutterwave payload
+    ====================================================== */
     const payload = {
       tx_ref: payment.tx_ref,
       amount,
@@ -192,7 +216,9 @@ exports.initiateDeliveryPayment = async (req, res) => {
       },
     };
 
-    // 5️⃣ Create Flutterwave checkout
+    /* ======================================================
+       5️⃣ Create Flutterwave checkout
+    ====================================================== */
     const fwRes = await axios.post(
       'https://api.flutterwave.com/v3/payments',
       payload,
@@ -209,6 +235,9 @@ exports.initiateDeliveryPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Flutterwave error' });
     }
 
+    /* ======================================================
+       6️⃣ Respond to client
+    ====================================================== */
     res.json({
       success: true,
       payment_link: fwRes.data.data.link,
