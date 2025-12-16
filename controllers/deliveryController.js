@@ -86,9 +86,7 @@ exports.initiateDeliveryPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'order_id is required' });
     }
 
-    /* =====================================
-       1️⃣ Fetch pending delivery
-    ===================================== */
+    // 1️⃣ Fetch pending delivery
     const [delivery] = await sql`
       SELECT
         d.delivery_fee,
@@ -112,55 +110,67 @@ exports.initiateDeliveryPayment = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid delivery fee' });
     }
 
-    /* =====================================
-       2️⃣ Generate references (AUTHORITATIVE)
-    ===================================== */
+    // 2️⃣ Generate references
     const paymentReference = `DELIVERY-${order_id}-${Date.now()}`;
     const txRef = `delivery-${order_id}-${crypto.randomUUID()}`;
 
-    /* =====================================
-   3️⃣ Create or update payment row FIRST
-===================================== */
-const [payment] = await sql`
-INSERT INTO payments (
-  order_id,
-  user_id,
-  amount,
-  currency,
-  status,
-  payment_type,
-  payment_method,
-  tx_ref,
-  payment_reference,
-  created_at,
-  updated_at
-)
-VALUES (
-  ${order_id},
-  ${delivery.user_id},
-  ${amount},
-  'NGN',
-  'pending',
-  'delivery_fee',
-  'flutterwave',
-  ${txRef},
-  ${paymentReference},
-  NOW(),
-  NOW()
-)
-ON CONFLICT (order_id, payment_type)
-DO UPDATE SET
-  tx_ref = EXCLUDED.tx_ref,
-  payment_reference = EXCLUDED.payment_reference,
-  amount = EXCLUDED.amount,
-  updated_at = NOW()
-RETURNING *;
-`;
+    // 3️⃣ Check if a delivery payment already exists
+    let [payment] = await sql`
+      SELECT *
+      FROM payments
+      WHERE order_id = ${order_id}
+        AND payment_type = 'delivery_fee'
+      LIMIT 1;
+    `;
 
+    if (!payment) {
+      // 3a️⃣ Insert new payment row
+      [payment] = await sql`
+        INSERT INTO payments (
+          order_id,
+          user_id,
+          amount,
+          currency,
+          status,
+          payment_type,
+          payment_method,
+          tx_ref,
+          payment_reference,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ${order_id},
+          ${delivery.user_id},
+          ${amount},
+          'NGN',
+          'pending',
+          'delivery_fee',
+          'flutterwave',
+          ${txRef},
+          ${paymentReference},
+          NOW(),
+          NOW()
+        )
+        RETURNING *;
+      `;
+      console.log(`✅ Created new payment row for order ${order_id}`);
+    } else {
+      // 3b️⃣ Update existing payment row
+      [payment] = await sql`
+        UPDATE payments
+        SET
+          tx_ref = ${txRef},
+          payment_reference = ${paymentReference},
+          amount = ${amount},
+          updated_at = NOW()
+        WHERE id = ${payment.id}
+        RETURNING *;
+      `;
+      console.log(`ℹ️ Updated existing payment row for order ${order_id}`);
+    }
 
-    /* =====================================
-       4️⃣ Build Flutterwave payload
-    ===================================== */
+    // 4️⃣ Build Flutterwave payload
     const payload = {
       tx_ref: payment.tx_ref,
       amount,
@@ -182,9 +192,7 @@ RETURNING *;
       },
     };
 
-    /* =====================================
-       5️⃣ Create Flutterwave checkout
-    ===================================== */
+    // 5️⃣ Create Flutterwave checkout
     const fwRes = await axios.post(
       'https://api.flutterwave.com/v3/payments',
       payload,
@@ -197,6 +205,7 @@ RETURNING *;
     );
 
     if (fwRes.data?.status !== 'success') {
+      console.error('❌ Flutterwave returned error:', fwRes.data);
       return res.status(400).json({ success: false, message: 'Flutterwave error' });
     }
 
