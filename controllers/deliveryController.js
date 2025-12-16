@@ -79,72 +79,134 @@ exports.getPendingDeliveryByOrder = async (req, res) => {
 exports.initiateDeliveryPayment = async (req, res) => {
   try {
     const { order_id } = req.params;
-    if (!order_id) return res.status(400).json({ success: false, message: "order_id is required" });
+    const userId = req.user.id;
 
+    if (!order_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'order_id is required',
+      });
+    }
+
+    // 1️⃣ Fetch pending delivery (single source of truth)
     const [delivery] = await sql`
-      SELECT d.delivery_fee, o.user_id, o.name, o.email, o.phone_number
+      SELECT
+        d.id            AS delivery_id,
+        d.delivery_fee,
+        o.user_id       AS buyer_id,
+        o.name          AS buyer_name,
+        o.email         AS buyer_email,
+        o.phone_number  AS buyer_phone
       FROM deliveries d
       JOIN orders o ON o.id = d.order_id
-      WHERE d.order_id = ${order_id} AND d.status = 'pending'
+      WHERE d.order_id = ${order_id}
+        AND d.status = 'pending'
       LIMIT 1;
     `;
 
-    if (!delivery) return res.status(404).json({ success: false, message: "No pending delivery found" });
+    if (!delivery) {
+      return res.status(404).json({
+        success: false,
+        message: 'No pending delivery found for this order',
+      });
+    }
 
+    // 2️⃣ Validate delivery fee
     const amount = Number(delivery.delivery_fee);
-    if (!amount || amount <= 0) return res.status(400).json({ success: false, message: "Invalid delivery fee" });
+    if (!amount || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid delivery fee',
+      });
+    }
 
-    // Generate tx_ref
-    const tx_ref = `delivery-${Date.now()}-${uuidv4()}`;
+    // 3️⃣ Generate authoritative tx_ref
+    const tx_ref = `delivery-${order_id}-${Date.now()}-${uuidv4()}`;
 
-    const payload = {
+    // 4️⃣ Create Flutterwave payment intent
+    const flutterwavePayload = {
       tx_ref,
       amount: Number(amount.toFixed(2)),
-      currency: "NGN",
-      redirect_url: "https://oluwaflozoya-backend.onrender.com/api/delivery/payment-success",
+      currency: 'NGN',
+      redirect_url: `${process.env.BASE_URL}/api/delivery/payment-success`,
       customer: {
-        email: delivery.email || "zoyaprocurementcompany@gmail.com",
-        name: delivery.name || "Customer",
-        phonenumber: String(delivery.phone_number || "08000000000").replace(/\D/g, ""),
+        email: delivery.buyer_email || 'zoyaprocurementcompany@gmail.com',
+        name: delivery.buyer_name || 'Customer',
+        phonenumber: String(delivery.buyer_phone || '08000000000').replace(/\D/g, ''),
       },
       customizations: {
-        title: "Zoya Delivery Payment",
+        title: 'Zoya Delivery Fee',
         description: `Delivery fee for order ${order_id}`,
       },
-      meta: { order_id, payment_type: "delivery_fee" },
+      meta: {
+        order_id,
+        payment_type: 'delivery_fee',
+      },
     };
 
-    const fwRes = await axios.post("https://api.flutterwave.com/v3/payments", payload, {
-      headers: {
-        Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
+    const fwResponse = await axios.post(
+      'https://api.flutterwave.com/v3/payments',
+      flutterwavePayload,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    if (fwResponse.data?.status !== 'success') {
+      console.error('❌ Flutterwave error:', fwResponse.data);
+      return res.status(400).json({
+        success: false,
+        message: fwResponse.data?.message || 'Flutterwave payment initialization failed',
+      });
+    }
+
+    // 5️⃣ Persist payment attempt (NO upsert, tx_ref is identity)
+    await sql`
+      INSERT INTO payments (
+        tx_ref,
+        order_id,
+        user_id,
+        amount,
+        currency,
+        status,
+        payment_type,
+        payment_method,
+        created_at,
+        updated_at
+      ) VALUES (
+        ${tx_ref},
+        ${order_id},
+        ${delivery.buyer_id},
+        ${amount},
+        'NGN',
+        'pending',
+        'delivery_fee',
+        'flutterwave',
+        NOW(),
+        NOW()
+      );
+    `;
+
+    // 6️⃣ Return payment link to client
+    return res.json({
+      success: true,
+      payment_link: fwResponse.data.data.link,
+      tx_ref,
     });
 
-    if (!fwRes.data || fwRes.data.status !== "success") {
-      return res.status(400).json({ success: false, message: fwRes.data?.message || "Flutterwave error" });
-    }
+  } catch (error) {
+    console.error(
+      '❌ initiateDeliveryPayment error:',
+      error.response?.data || error.message
+    );
 
-    // Upsert payment record to avoid duplicates
-    const existingPayment = await sql`SELECT id FROM payments WHERE order_id = ${order_id} AND payment_type = 'delivery_fee' AND status = 'pending';`;
-    if (existingPayment.length > 0) {
-      await sql`UPDATE payments SET tx_ref = ${tx_ref}, amount = ${amount}, updated_at = NOW() WHERE id = ${existingPayment[0].id};`;
-    } else {
-      await sql`
-        INSERT INTO payments (
-          order_id, user_id, amount, status, tx_ref,
-          payment_type, payment_method, currency, created_at
-        ) VALUES (
-          ${order_id}, ${delivery.user_id}, ${amount}, 'pending',
-          ${tx_ref}, 'delivery_fee', 'flutterwave', 'NGN', NOW()
-        );
-      `;
-    }
-
-    res.json({ success: true, message: "Delivery payment initialized", payment_link: fwRes.data.data.link, tx_ref });
-  } catch (err) {
-    console.error("❌ initiateDeliveryPayment error:", err.response?.data || err.message);
-    res.status(500).json({ success: false, message: "Server error initializing delivery payment" });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to initialize delivery payment',
+    });
   }
 };
 
