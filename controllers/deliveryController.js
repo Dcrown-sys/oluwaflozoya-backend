@@ -148,13 +148,14 @@ exports.initiateDeliveryPayment = async (req, res) => {
         NOW(),
         NOW()
       )
-      ON CONFLICT (order_id, payment_type)
+       ON CONFLICT ON CONSTRAINT unique_delivery_payment
       DO UPDATE SET
         tx_ref = EXCLUDED.tx_ref,
         payment_reference = EXCLUDED.payment_reference,
         updated_at = NOW()
       RETURNING *;
     `;
+
 
     /* =====================================
        4️⃣ Build Flutterwave payload
