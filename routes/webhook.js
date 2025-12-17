@@ -5,14 +5,14 @@ const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryCon
 
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH;
 
-// IMPORTANT: raw body is required for signature verification
+// IMPORTANT: raw body required for Flutterwave signature verification
 router.post(
   '/flutterwave-webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
       /* ======================================================
-         1️⃣ VERIFY SIGNATURE
+         1️⃣ VERIFY FLUTTERWAVE SIGNATURE
       ====================================================== */
       const signature = req.headers['verif-hash'];
       if (!signature || signature !== FLW_SECRET_HASH) {
@@ -27,17 +27,22 @@ router.post(
       try {
         payload = JSON.parse(req.body.toString());
       } catch {
-        return res.status(400).send('Invalid JSON');
+        return res.status(400).send('Invalid JSON payload');
       }
 
-      const { event, data } = payload;
-      if (!data?.tx_ref && !data?.meta?.payment_reference) {
-        return res.status(400).send('Missing tx_ref or payment_reference');
+      const { data } = payload;
+      if (!data) {
+        return res.status(400).send('Missing data');
       }
 
-      const txRef = data.tx_ref;
-      const paymentReference = data.meta?.payment_reference;
+      const txRef = data.tx_ref || null;
+      const flwRef = data.flw_ref || data.id || null;
+      const paymentReference = data.meta?.payment_reference || null;
       const flutterStatus = (data.status || '').toLowerCase();
+
+      if (!txRef && !flwRef && !paymentReference) {
+        return res.status(400).send('No identifiers provided');
+      }
 
       /* ======================================================
          3️⃣ MAP FLUTTERWAVE STATUS → INTERNAL STATUS
@@ -50,25 +55,31 @@ router.post(
       }
 
       /* ======================================================
-         4️⃣ FETCH PAYMENT (USE payment_reference OR tx_ref)
+         4️⃣ FETCH PAYMENT (ROBUST MATCHING)
       ====================================================== */
       const [payment] = await sql`
         SELECT *
         FROM payments
-        WHERE ${paymentReference ? sql`payment_reference = ${paymentReference}` : sql`tx_ref = ${txRef}`}
+        WHERE
+          (${txRef} IS NOT NULL AND tx_ref = ${txRef})
+          OR (${paymentReference} IS NOT NULL AND payment_reference = ${paymentReference})
+          OR (${flwRef} IS NOT NULL AND flw_ref = ${flwRef})
         LIMIT 1;
       `;
 
       if (!payment) {
-        console.warn(`⚠️ No payment found for tx_ref: ${txRef} or payment_reference: ${paymentReference}`);
+        console.warn(
+          '⚠️ Payment not found',
+          { txRef, flwRef, paymentReference }
+        );
         return res.status(200).send('Ignored');
       }
 
       /* ======================================================
          5️⃣ IDEMPOTENCY CHECK
       ====================================================== */
-      if (payment.status === 'completed' || payment.status === 'cancelled') {
-        console.log(`ℹ️ Payment ${payment.tx_ref} already finalized`);
+      if (['completed', 'cancelled'].includes(payment.status)) {
+        console.log(`ℹ️ Payment already processed: ${payment.id}`);
         return res.status(200).send('Already processed');
       }
 
@@ -79,39 +90,32 @@ router.post(
         UPDATE payments
         SET
           status = ${newPaymentStatus},
-          amount = ${data.amount || payment.amount},
-          currency = ${data.currency || payment.currency},
-          flw_ref = ${data.id || payment.flw_ref},
+          flw_ref = ${flwRef || payment.flw_ref},
           updated_at = NOW()
         WHERE id = ${payment.id};
       `;
 
       /* ======================================================
-         7️⃣ HANDLE DELIVERY PAYMENT
+         7️⃣ HANDLE DELIVERY PAYMENT (CRITICAL PART)
       ====================================================== */
       if (payment.payment_type === 'delivery_fee' && newPaymentStatus === 'completed') {
         const orderId = payment.order_id;
 
-        // Update delivery status
-        const updatedDelivery = await sql`
+        // Update delivery
+        await sql`
           UPDATE deliveries
           SET status = 'en_route', updated_at = NOW()
-          WHERE order_id = ${orderId} AND status = 'pending'
-          RETURNING id;
+          WHERE order_id = ${orderId} AND status = 'pending';
         `;
 
-        if (updatedDelivery.length === 0) {
-          console.warn(`⚠️ No pending delivery found for order ${orderId}`);
-        }
-
-        // Auto-assign courier (ONCE)
+        // Auto-assign courier (safe to retry)
         try {
           await finalizeDeliveryAfterPaymentAuto(orderId);
         } catch (err) {
           console.error('❌ Courier auto-assignment failed:', err);
         }
 
-        // Update order status
+        // Update order
         await sql`
           UPDATE orders
           SET status = 'en_route', updated_at = NOW()
@@ -119,11 +123,21 @@ router.post(
         `;
       }
 
-      console.log(`✅ Webhook processed for tx_ref: ${payment.tx_ref}, payment_reference: ${payment.payment_reference}`);
+      console.log(
+        '✅ Flutterwave webhook processed',
+        {
+          payment_id: payment.id,
+          status: newPaymentStatus,
+          txRef,
+          flwRef,
+          paymentReference
+        }
+      );
+
       return res.status(200).send('OK');
 
     } catch (err) {
-      console.error('💥 Webhook processing error:', err);
+      console.error('💥 Flutterwave webhook error:', err);
       return res.status(500).send('Server error');
     }
   }
