@@ -5,20 +5,23 @@ const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryCon
 
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH;
 
-// IMPORTANT: raw body required for Flutterwave signature verification
+// Use raw body for signature verification
 router.post(
   '/flutterwave-webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
+      console.log('🔔 Flutterwave webhook received');
+
       /* ======================================================
-         1️⃣ VERIFY FLUTTERWAVE SIGNATURE
+         1️⃣ VERIFY SIGNATURE
       ====================================================== */
       const signature = req.headers['verif-hash'];
       if (!signature || signature !== FLW_SECRET_HASH) {
         console.warn('❌ Invalid Flutterwave webhook signature');
         return res.status(401).send('Invalid signature');
       }
+      console.log('✅ Signature verified');
 
       /* ======================================================
          2️⃣ PARSE PAYLOAD
@@ -26,14 +29,14 @@ router.post(
       let payload;
       try {
         payload = JSON.parse(req.body.toString());
-      } catch {
+      } catch (err) {
+        console.error('❌ Invalid JSON payload', err);
         return res.status(400).send('Invalid JSON payload');
       }
+      console.log('📦 Payload parsed:', payload);
 
-      const { data } = payload;
-      if (!data) {
-        return res.status(400).send('Missing data');
-      }
+      const { data, event } = payload;
+      if (!data) return res.status(400).send('Missing data in payload');
 
       const txRef = data.tx_ref || null;
       const flwRef = data.flw_ref || data.id || null;
@@ -44,18 +47,23 @@ router.post(
         return res.status(400).send('No identifiers provided');
       }
 
+      console.log('📝 Identifiers:', { txRef, flwRef, paymentReference, flutterStatus });
+
       /* ======================================================
-         3️⃣ MAP FLUTTERWAVE STATUS → INTERNAL STATUS
+         3️⃣ MAP FLUTTERWAVE EVENT → INTERNAL STATUS
       ====================================================== */
       let newPaymentStatus = 'pending';
-      if (['successful', 'completed'].includes(flutterStatus)) {
+
+      if (event === 'charge.completed' && ['successful', 'completed'].includes(flutterStatus)) {
         newPaymentStatus = 'completed';
       } else if (['failed', 'cancelled'].includes(flutterStatus)) {
         newPaymentStatus = 'cancelled';
       }
 
+      console.log('💡 Mapped payment status:', newPaymentStatus);
+
       /* ======================================================
-         4️⃣ FETCH PAYMENT (ROBUST MATCHING)
+         4️⃣ FETCH PAYMENT ROW
       ====================================================== */
       const [payment] = await sql`
         SELECT *
@@ -68,18 +76,17 @@ router.post(
       `;
 
       if (!payment) {
-        console.warn(
-          '⚠️ Payment not found',
-          { txRef, flwRef, paymentReference }
-        );
+        console.warn('⚠️ Payment row not found, ignoring webhook', { txRef, flwRef, paymentReference });
         return res.status(200).send('Ignored');
       }
+
+      console.log('🔍 Found payment:', payment.id, payment.payment_type, payment.status);
 
       /* ======================================================
          5️⃣ IDEMPOTENCY CHECK
       ====================================================== */
       if (['completed', 'cancelled'].includes(payment.status)) {
-        console.log(`ℹ️ Payment already processed: ${payment.id}`);
+        console.log(`ℹ️ Payment already processed: ${payment.id}, status: ${payment.status}`);
         return res.status(200).send('Already processed');
       }
 
@@ -95,49 +102,50 @@ router.post(
         WHERE id = ${payment.id};
       `;
 
+      console.log(`✅ Payment updated: ${payment.id}, new status: ${newPaymentStatus}`);
+
       /* ======================================================
-         7️⃣ HANDLE DELIVERY PAYMENT (CRITICAL PART)
+         7️⃣ HANDLE DELIVERY PAYMENTS
       ====================================================== */
       if (payment.payment_type === 'delivery_fee' && newPaymentStatus === 'completed') {
         const orderId = payment.order_id;
 
-        // Update delivery
-        await sql`
+        // Update delivery status
+        const updatedDelivery = await sql`
           UPDATE deliveries
           SET status = 'en_route', updated_at = NOW()
-          WHERE order_id = ${orderId} AND status = 'pending';
+          WHERE order_id = ${orderId} AND status = 'pending'
+          RETURNING id;
         `;
 
-        // Auto-assign courier (safe to retry)
+        if (updatedDelivery.length > 0) {
+          console.log(`📦 Delivery updated for order ${orderId}`);
+        } else {
+          console.warn(`⚠️ No pending delivery found for order ${orderId}`);
+        }
+
+        // Auto-assign courier
         try {
           await finalizeDeliveryAfterPaymentAuto(orderId);
+          console.log(`🛵 Courier auto-assigned for order ${orderId}`);
         } catch (err) {
           console.error('❌ Courier auto-assignment failed:', err);
         }
 
-        // Update order
+        // Update order status
         await sql`
           UPDATE orders
           SET status = 'en_route', updated_at = NOW()
           WHERE id = ${orderId};
         `;
+        console.log(`📝 Order updated to en_route: ${orderId}`);
       }
 
-      console.log(
-        '✅ Flutterwave webhook processed',
-        {
-          payment_id: payment.id,
-          status: newPaymentStatus,
-          txRef,
-          flwRef,
-          paymentReference
-        }
-      );
-
+      console.log('🎯 Webhook fully processed for payment:', payment.id);
       return res.status(200).send('OK');
 
     } catch (err) {
-      console.error('💥 Flutterwave webhook error:', err);
+      console.error('💥 Webhook processing error:', err);
       return res.status(500).send('Server error');
     }
   }
