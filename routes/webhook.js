@@ -4,25 +4,41 @@ const { sql } = require('../db');
 const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryController');
 const crypto = require('crypto');
 
+// Middleware to save raw body for HMAC verification
+const rawBodySaver = (req, res, buf, encoding) => {
+  if (buf && buf.length) {
+    req.rawBody = buf;
+  }
+};
+
 // 🟢 Flutterwave webhook route
 router.post(
   '/flutterwave-webhook',
-  express.raw({ type: 'application/json' }),
+  express.raw({ type: 'application/json', verify: rawBodySaver }),
   async (req, res) => {
     try {
       console.log('🌀 Flutterwave webhook received');
 
       // 1️⃣ Headers
-      console.log('Headers:', req.headers);
+      console.log('Headers:', JSON.stringify(req.headers, null, 2));
 
-      // 2️⃣ Raw body
-      const rawBody = req.body;
-      console.log('Raw body type:', rawBody.constructor.name);
-      console.log('Raw body length:', rawBody.length);
+      // 2️⃣ Raw body (should now be a Buffer)
+      const rawBody = req.rawBody;
+      console.log('Raw body type:', rawBody ? rawBody.constructor.name : 'undefined');
+      console.log('Raw body length:', rawBody ? rawBody.length : 'undefined');
+      if (!rawBody) {
+        console.error('❌ Raw body not captured');
+        return res.status(400).send('Invalid request');
+      }
 
       // 3️⃣ Verify signature using Flutterwave secret key
       const signature = req.headers['verif-hash'];
       const secret = process.env.FLW_SECRET_KEY;
+
+      if (!secret) {
+        console.error('❌ FLW_SECRET_KEY not set');
+        return res.status(500).send('Server configuration error');
+      }
 
       const hash = crypto.createHmac('sha256', secret)
                          .update(rawBody)
@@ -47,7 +63,7 @@ router.post(
         return res.status(400).send('Invalid JSON');
       }
 
-      console.log('💡 Parsed payload:', JSON.stringify(payload));
+      console.log('💡 Parsed payload:', JSON.stringify(payload, null, 2));
 
       // 5️⃣ Extract relevant info
       const { event, data } = payload;
@@ -91,6 +107,8 @@ router.post(
         return res.status(200).send('Ignored');
       }
 
+      console.log('💳 Found payment:', payment.id);
+
       // 8️⃣ Idempotency check
       if (['completed', 'cancelled'].includes(payment.status)) {
         console.log(`ℹ️ Payment already finalized: ${payment.id}`);
@@ -98,7 +116,7 @@ router.post(
       }
 
       // 9️⃣ Update payment record
-      const updatedPayment = await sql`
+      const [updatedPayment] = await sql`
         UPDATE payments
         SET
           status = ${newPaymentStatus},
