@@ -1,13 +1,11 @@
-// routes/webhookRoutes.js
+// routes/flutterwaveWebhook.js
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const { sql } = require('../db');
 const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryController');
-const crypto = require('crypto');
 
-const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH;
-
-// Use raw body parser for Flutterwave webhook
+// IMPORTANT: Use raw body parser for Flutterwave webhook
 router.post(
   '/flutterwave-webhook',
   express.raw({ type: 'application/json' }),
@@ -15,99 +13,94 @@ router.post(
     try {
       console.log('🌀 Flutterwave webhook received');
 
-      // 1️⃣ Log headers
-      console.log('Headers:', req.headers);
-
-      // 2️⃣ Capture raw payload
-      const rawPayload = req.body.toString();
-      console.log('Body (raw):', rawPayload);
-
-      // 3️⃣ Compute HMAC SHA256 using your FLW_SECRET_HASH
-      const hash = crypto.createHmac('sha256', FLW_SECRET_HASH)
-                         .update(rawPayload)
-                         .digest('hex');
-
+      // 1️⃣ Capture headers and raw body
       const signature = req.headers['verif-hash'];
+      const rawBody = req.body.toString();
+      console.log('Headers:', req.headers);
+      console.log('Raw body:', rawBody);
 
+      // 2️⃣ Compute HMAC SHA256 using FLW_SECRET_KEY
+      const hash = crypto
+        .createHmac('sha256', process.env.FLW_SECRET_KEY)
+        .update(rawBody)
+        .digest('hex');
+
+      console.log('Computed hash:', hash);
+
+      // 3️⃣ Verify signature
       if (!signature || signature !== hash) {
-        console.warn('❌ Invalid Flutterwave webhook signature', signature, hash);
+        console.warn('❌ Invalid webhook signature', signature, hash);
         return res.status(401).send('Invalid signature');
       }
-      console.log('✅ Webhook signature verified');
 
       // 4️⃣ Parse JSON payload
       let payload;
       try {
-        payload = JSON.parse(rawPayload);
+        payload = JSON.parse(rawBody);
       } catch (err) {
-        console.error('❌ Invalid JSON payload:', err);
+        console.error('❌ Failed to parse JSON payload:', err);
         return res.status(400).send('Invalid JSON');
       }
+
       console.log('💡 Parsed payload:', JSON.stringify(payload));
 
       const { event, data } = payload;
       if (!data) {
-        console.warn('⚠️ Missing data in payload');
+        console.warn('⚠️ No data in webhook payload');
         return res.status(400).send('Missing data');
       }
 
-      const txRef = data.tx_ref || null;
-      const flwRef = data.id || null;
-      const paymentReference = data.meta?.payment_reference || null;
+      const txRef = data.tx_ref;
+      const flwRef = data.id;
+      const paymentType = data.meta?.payment_type || null;
       const flutterStatus = (data.status || '').toLowerCase();
 
-      console.log('🔑 Identifiers:', { txRef, flwRef, paymentReference, flutterStatus });
+      console.log('Identifiers:', { txRef, flwRef, paymentType, flutterStatus });
 
-      // 5️⃣ Map Flutterwave status to internal status
-      let newPaymentStatus = 'pending';
-      if (
-        ['charge.completed', 'payment.completed'].includes(event) &&
-        ['successful', 'success', 'completed'].includes(flutterStatus)
-      ) {
-        newPaymentStatus = 'completed';
+      // 5️⃣ Map Flutterwave status to internal payment status
+      let newStatus = 'pending';
+      if (['charge.completed', 'payment.completed'].includes(event) &&
+          ['successful', 'success', 'completed'].includes(flutterStatus)) {
+        newStatus = 'completed';
       } else if (['failed', 'cancelled'].includes(flutterStatus)) {
-        newPaymentStatus = 'cancelled';
+        newStatus = 'cancelled';
       }
-      console.log('💠 Mapped newPaymentStatus:', newPaymentStatus);
 
-      // 6️⃣ Fetch payment row
+      console.log('💠 Mapped internal status:', newStatus);
+
+      // 6️⃣ Fetch payment record
       const [payment] = await sql`
-        SELECT *
-        FROM payments
-        WHERE
-          (${txRef} IS NOT NULL AND tx_ref = ${txRef})
-          OR (${paymentReference} IS NOT NULL AND payment_reference = ${paymentReference})
-          OR (${flwRef} IS NOT NULL AND flw_ref = ${flwRef})
+        SELECT * FROM payments
+        WHERE tx_ref = ${txRef} OR flw_ref = ${flwRef}
         LIMIT 1;
       `;
 
       if (!payment) {
-        console.warn('⚠️ No payment found for webhook', { txRef, flwRef, paymentReference });
+        console.warn('⚠️ No payment record found for webhook', { txRef, flwRef });
         return res.status(200).send('Ignored');
       }
 
       // 7️⃣ Idempotency check
       if (['completed', 'cancelled'].includes(payment.status)) {
-        console.log(`ℹ️ Payment already finalized: ${payment.id}`);
+        console.log(`ℹ️ Payment already processed: ${payment.id}`);
         return res.status(200).send('Already processed');
       }
 
       // 8️⃣ Update payment record
-      const [updatedPayment] = await sql`
+      const updatedPayment = await sql`
         UPDATE payments
-        SET
-          status = ${newPaymentStatus},
-          flw_ref = ${flwRef || payment.flw_ref},
-          amount = ${data.amount || payment.amount},
-          currency = ${data.currency || payment.currency},
-          updated_at = NOW()
+        SET status = ${newStatus},
+            flw_ref = ${flwRef},
+            amount = ${data.amount || payment.amount},
+            currency = ${data.currency || payment.currency},
+            updated_at = NOW()
         WHERE id = ${payment.id}
         RETURNING *;
       `;
-      console.log('✅ Updated payment row:', updatedPayment);
+      console.log('✅ Updated payment:', updatedPayment);
 
-      // 9️⃣ Handle delivery payment completion
-      if (payment.payment_type === 'delivery_fee' && newPaymentStatus === 'completed') {
+      // 9️⃣ Handle delivery-specific logic
+      if (payment.payment_type === 'delivery_fee' && newStatus === 'completed') {
         const orderId = payment.order_id;
 
         // Update delivery status
@@ -117,17 +110,12 @@ router.post(
           WHERE order_id = ${orderId} AND status = 'pending'
           RETURNING id;
         `;
+        console.log('🚚 Delivery updated:', updatedDelivery);
 
-        if (updatedDelivery.length === 0) {
-          console.warn(`⚠️ No pending delivery found for order ${orderId}`);
-        } else {
-          console.log('🚚 Delivery updated:', updatedDelivery);
-        }
-
-        // Auto-assign courier (retry safe)
+        // Auto-assign courier safely
         try {
           await finalizeDeliveryAfterPaymentAuto(orderId);
-          console.log('🤝 Courier auto-assigned');
+          console.log('🤝 Courier auto-assigned for order', orderId);
         } catch (err) {
           console.error('❌ Courier auto-assignment failed:', err);
         }
@@ -138,15 +126,15 @@ router.post(
           SET status = 'en_route', updated_at = NOW()
           WHERE id = ${orderId};
         `;
-        console.log(`📦 Order ${orderId} marked en_route`);
+        console.log(`📦 Order ${orderId} marked as en_route`);
       }
 
       console.log(`✅ Webhook processed successfully for payment ${payment.id}`);
-      return res.status(200).send('OK');
+      res.status(200).send('OK');
 
     } catch (err) {
       console.error('💥 Webhook processing error:', err);
-      return res.status(500).send('Server error');
+      res.status(500).send('Server error');
     }
   }
 );

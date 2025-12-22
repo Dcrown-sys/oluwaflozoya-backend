@@ -157,9 +157,10 @@ exports.verifyFlutterwaveWebhook = async (req, res) => {
     const payload = JSON.stringify(req.body);
 
     // ✅ Use the webhook secret, NOT API key
-    const hash = crypto.createHmac('sha256', process.env.FLW_SECRET_HASH)
-                       .update(payload)
-                       .digest('hex');
+    const hash = crypto.createHmac('sha256', process.env.FLW_SECRET_KEY)
+                   .update(payload)
+                   .digest('hex');
+
 
     if (!signature || signature !== hash) {
       console.log('❌ Invalid webhook signature', signature, hash);
