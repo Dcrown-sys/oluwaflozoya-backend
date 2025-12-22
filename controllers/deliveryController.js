@@ -199,7 +199,8 @@ exports.initiateDeliveryPayment = async (req, res) => {
       tx_ref: payment.tx_ref,
       amount,
       currency: 'NGN',
-      redirect_url: `${process.env.BASE_URL}/api/delivery/payment-success`,
+      redirect_url: `${process.env.BASE_URL}/api/delivery/payment-success?tx_ref=${txRef}`,
+
       customer: {
         email: delivery.email,
         name: delivery.name,
