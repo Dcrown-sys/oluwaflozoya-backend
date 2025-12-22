@@ -33,7 +33,7 @@ router.post(
 
       // 3️⃣ Verify signature using Flutterwave secret key
       const signature = req.headers['verif-hash'];
-      const secret = process.env.FLW_SECRET_KEY;
+      const secret = process.env.FLW_WEBHOOK_SECRET;  // Instead of FLW_SECRET_KEY
 
       if (!secret) {
         console.error('❌ FLW_SECRET_KEY not set');
