@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const bodyParser = require('body-parser');
 const {
   payOrderDelivery,
   verifyFlutterwaveWebhook,
@@ -49,7 +50,7 @@ router.get('/delivery/:order_id', verifyBuyer, async (req, res) => {
 });
 
 // ✅ Flutterwave webhook route (public, no auth)
-router.post('/flutterwave-webhook', verifyFlutterwaveWebhook);
+router.post('/flutterwave-webhook', bodyParser.raw({ type: 'application/json' }), verifyFlutterwaveWebhook);
 
 // ✅ Manual confirmation route (called by your app)
 router.post('/confirm-payment', confirmPayment);

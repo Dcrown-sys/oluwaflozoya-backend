@@ -1,37 +1,48 @@
+// routes/webhookRoutes.js
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
 const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryController');
+const crypto = require('crypto');
 
 const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH;
 
-// IMPORTANT: raw body required for Flutterwave signature verification
+// Use raw body parser for Flutterwave webhook
 router.post(
   '/flutterwave-webhook',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
-      // 1️⃣ LOG RAW WEBHOOK
       console.log('🌀 Flutterwave webhook received');
-      console.log('Headers:', req.headers);
-      console.log('Body (raw):', req.body.toString());
 
-      // 2️⃣ VERIFY SIGNATURE
+      // 1️⃣ Log headers
+      console.log('Headers:', req.headers);
+
+      // 2️⃣ Capture raw payload
+      const rawPayload = req.body.toString();
+      console.log('Body (raw):', rawPayload);
+
+      // 3️⃣ Compute HMAC SHA256 using your FLW_SECRET_HASH
+      const hash = crypto.createHmac('sha256', FLW_SECRET_HASH)
+                         .update(rawPayload)
+                         .digest('hex');
+
       const signature = req.headers['verif-hash'];
-      if (!signature || signature !== FLW_SECRET_HASH) {
-        console.warn('❌ Invalid Flutterwave webhook signature');
+
+      if (!signature || signature !== hash) {
+        console.warn('❌ Invalid Flutterwave webhook signature', signature, hash);
         return res.status(401).send('Invalid signature');
       }
+      console.log('✅ Webhook signature verified');
 
-      // 3️⃣ PARSE PAYLOAD
+      // 4️⃣ Parse JSON payload
       let payload;
       try {
-        payload = JSON.parse(req.body.toString());
+        payload = JSON.parse(rawPayload);
       } catch (err) {
         console.error('❌ Invalid JSON payload:', err);
         return res.status(400).send('Invalid JSON');
       }
-
       console.log('💡 Parsed payload:', JSON.stringify(payload));
 
       const { event, data } = payload;
@@ -41,35 +52,25 @@ router.post(
       }
 
       const txRef = data.tx_ref || null;
-      const flwRef = data.flw_ref || data.id || null;
+      const flwRef = data.id || null;
       const paymentReference = data.meta?.payment_reference || null;
       const flutterStatus = (data.status || '').toLowerCase();
 
-      if (!txRef && !flwRef && !paymentReference) {
-        console.warn('⚠️ No identifiers provided in webhook');
-        return res.status(400).send('No identifiers');
-      }
-
       console.log('🔑 Identifiers:', { txRef, flwRef, paymentReference, flutterStatus });
 
-      // 4️⃣ MAP FLUTTERWAVE STATUS → INTERNAL STATUS
+      // 5️⃣ Map Flutterwave status to internal status
       let newPaymentStatus = 'pending';
-
-      // Treat any successful signal from Flutterwave as completed
       if (
         ['charge.completed', 'payment.completed'].includes(event) &&
         ['successful', 'success', 'completed'].includes(flutterStatus)
       ) {
         newPaymentStatus = 'completed';
-      }
-
-      if (['failed', 'cancelled'].includes(flutterStatus)) {
+      } else if (['failed', 'cancelled'].includes(flutterStatus)) {
         newPaymentStatus = 'cancelled';
       }
-
       console.log('💠 Mapped newPaymentStatus:', newPaymentStatus);
 
-      // 5️⃣ FETCH PAYMENT ROW
+      // 6️⃣ Fetch payment row
       const [payment] = await sql`
         SELECT *
         FROM payments
@@ -85,14 +86,14 @@ router.post(
         return res.status(200).send('Ignored');
       }
 
-      // 6️⃣ IDEMPOTENCY CHECK
+      // 7️⃣ Idempotency check
       if (['completed', 'cancelled'].includes(payment.status)) {
         console.log(`ℹ️ Payment already finalized: ${payment.id}`);
         return res.status(200).send('Already processed');
       }
 
-      // 7️⃣ UPDATE PAYMENT RECORD
-      const updatedPayment = await sql`
+      // 8️⃣ Update payment record
+      const [updatedPayment] = await sql`
         UPDATE payments
         SET
           status = ${newPaymentStatus},
@@ -103,10 +104,9 @@ router.post(
         WHERE id = ${payment.id}
         RETURNING *;
       `;
-
       console.log('✅ Updated payment row:', updatedPayment);
 
-      // 8️⃣ HANDLE DELIVERY PAYMENT
+      // 9️⃣ Handle delivery payment completion
       if (payment.payment_type === 'delivery_fee' && newPaymentStatus === 'completed') {
         const orderId = payment.order_id;
 
