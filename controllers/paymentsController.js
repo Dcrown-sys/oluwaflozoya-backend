@@ -152,7 +152,15 @@ exports.finalizeDeliveryAfterPayment = async ({ tx_ref, flw_ref, meta }) => {
 exports.verifyFlutterwaveWebhook = async (req, res) => {
   try {
     const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
-    if (!signature || signature !== process.env.FLW_SECRET_HASH) {
+    const payload = JSON.stringify(req.body);
+
+    // ✅ Use the webhook secret, NOT API key
+    const hash = crypto.createHmac('sha256', process.env.FLW_SECRET_HASH)
+                       .update(payload)
+                       .digest('hex');
+
+    if (!signature || signature !== hash) {
+      console.log('❌ Invalid webhook signature', signature, hash);
       return res.status(401).json({ success: false, message: 'Invalid Flutterwave signature' });
     }
 
@@ -162,6 +170,7 @@ exports.verifyFlutterwaveWebhook = async (req, res) => {
     }
 
     const { tx_ref, status, id: flw_ref, meta } = data;
+
     if (status === 'successful' && meta?.payment_type === 'delivery_fee') {
       await exports.finalizeDeliveryAfterPayment({ tx_ref, flw_ref, meta });
       return res.status(200).json({ success: true, message: 'Payment finalized successfully' });
