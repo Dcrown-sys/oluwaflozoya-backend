@@ -13,6 +13,7 @@ const fetch = require('node-fetch');
 
 
 
+
 // 🔐 JWT secret
 const JWT_SECRET = process.env.JWT_SECRET;
 const GOOGLE_KEY = process.env.GOOGLE_MAPS_API_KEY; 
@@ -1915,6 +1916,14 @@ exports.getCategories = async (req, res) => {
         INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
         VALUES (${uuidv4()}, ${order.id}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, NOW())
       `;
+  
+      // 🆕 Add this: Create notification for the buyer after order/payment setup
+      await createNotification({
+        userId: user_id,  // Buyer's ID from the request
+        title: 'Order Placed Successfully',
+        body: `Your order #${order.id} has been placed. Total: ₦${totalAmount.toFixed(2)}. You'll receive updates soon.`,
+        data: { order_id: order.id },  // Optional: extra data for app navigation
+      });
   
       // -----------------------
       // ✅ Response
