@@ -4,7 +4,7 @@ const { sql } = require('../db');
 const { finalizeDeliveryAfterPaymentAuto } = require('../controllers/deliveryController');
 const crypto = require('crypto');
 
-// Middleware to save raw body for HMAC verification
+// Middleware to save raw body for HMAC verification (as per Flutterwave docs)
 const rawBodySaver = (req, res, buf, encoding) => {
   if (buf && buf.length) {
     req.rawBody = buf;
@@ -24,22 +24,23 @@ router.post(
 
       // 2️⃣ Raw body (should now be a Buffer)
       const rawBody = req.rawBody;
-      console.log('Raw body type:', rawBody ? rawBody.constructor.name : 'undefined');
+      console.log('Raw body type:', rawBody ? rawBody.constructor.name : '');
       console.log('Raw body length:', rawBody ? rawBody.length : 'undefined');
       if (!rawBody) {
         console.error('❌ Raw body not captured');
         return res.status(400).send('Invalid request');
       }
 
-      // 3️⃣ Verify signature using Flutterwave secret key
-      const signature = req.headers['verif-hash'];
-      const secret = process.env.FLW_WEBHOOK_SECRET;  // Instead of FLW_SECRET_KEY
+      // 3️⃣ Verify signature using Flutterwave secret hash (HMAC SHA256 as per docs)
+      const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
+      const secret = process.env.FLW_WEBHOOK_SECRET;  // Your secret hash from Flutterwave dashboard
 
       if (!secret) {
-        console.error('❌ FLW_SECRET_KEY not set');
+        console.error('❌ FLW_WEBHOOK_SECRET not set');
         return res.status(500).send('Server configuration error');
       }
 
+      // Compute HMAC SHA256 of raw body
       const hash = crypto.createHmac('sha256', secret)
                          .update(rawBody)
                          .digest('hex');
@@ -54,7 +55,7 @@ router.post(
 
       console.log('✅ Signature verified');
 
-      // 4️⃣ Parse JSON AFTER verification
+      // 4️⃣ Parse JSON AFTER verification (as per Flutterwave docs)
       let payload;
       try {
         payload = JSON.parse(rawBody.toString('utf8'));

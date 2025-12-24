@@ -4,7 +4,7 @@ const router = express.Router();
 const { sql } = require('../db');
 const axios = require('axios');
 
-const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH || 'zoyaWebhookSecret123';
+const FLW_WEBHOOK_SECRET = process.env.FLW_WEBHOOK_SECRET || 'ZoyaSecureWebhookHashKey2025XYZABCDEFG';
 const FLW_SECRET_KEY = process.env.FLW_SECRET_KEY || 'FLWSECK-0b62e2fdee10788400a7d23a93cfb26d-19a076840e3vt-X';
 
 let ioInstance;
@@ -18,7 +18,7 @@ router.post('/flutterwave-webhook', express.raw({ type: 'application/json' }), a
   try {
     // 1️⃣ Verify Flutterwave signature
     const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
-    if (!signature || signature !== FLW_SECRET_HASH) {
+    if (!signature || signature !== FLW_WEBHOOK_SECRET) {
       console.warn('⚠️ Invalid Flutterwave webhook signature');
       return res.status(401).send('Invalid signature');
     }
