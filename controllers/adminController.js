@@ -9,6 +9,7 @@ const axios = require('axios');
 const { geocodeAddress } = require ('../utils/geocode');
 const { calculateEta } = require('../utils/eta');
 const fetch = require('node-fetch');
+ // Adjust path if your notifications controller is in a different location (e.g., '../controllers/notifications')
 
 
 
@@ -1456,11 +1457,12 @@ exports.validatePromoCode = async (req, res) => {
   };
   
   // CREATE new notification with socket emit
-  exports.createNotification = async (req, res) => {
-    const { userId, title, body, data } = req.body;
+  exports.createNotification = async (input, res = null) => {
+    const { userId, title, body, data } = input.userId ? input : input.body;
   
     if (!userId || !title || !body) {
-      return res.status(400).json({ error: 'Missing userId, title or body' });
+      if (res) return res.status(400).json({ error: 'Missing userId, title or body' });
+      throw new Error('Missing userId, title or body');
     }
   
     try {
@@ -1472,17 +1474,25 @@ exports.validatePromoCode = async (req, res) => {
   
       const newNotification = inserted[0];
   
-      // Emit event to the user's socket room if io is initialized
       if (ioInstance) {
         ioInstance.to(`user_${userId}`).emit('newNotification', newNotification);
       }
   
-      res.status(201).json({ message: 'Notification created', notification: newNotification });
+      if (res) {
+        return res.status(201).json({ message: 'Notification created', notification: newNotification });
+      } else {
+        return newNotification;
+      }
     } catch (error) {
       console.error('Error creating notification:', error);
-      res.status(500).json({ error: 'Failed to create notification' });
+      if (res) {
+        return res.status(500).json({ error: 'Failed to create notification' });
+      } else {
+        throw error;
+      }
     }
   };
+
   
   // MARK notification as read
   exports.markNotificationAsRead = async (req, res) => {
@@ -1800,7 +1810,6 @@ exports.getCategories = async (req, res) => {
       if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
         return res.status(400).json({ error: 'Valid user_id is required' });
       }
-  
       if (!['order', 'delivery'].includes(payment_type)) {
         return res.status(400).json({ error: 'Invalid payment_type' });
       }
@@ -1809,15 +1818,11 @@ exports.getCategories = async (req, res) => {
       let order;
   
       // -----------------------
-      // 🛒 Handle ORDER payments
+      // Handle ORDER payments
       // -----------------------
       if (payment_type === 'order') {
-        if (!items?.length) {
-          return res.status(400).json({ error: 'Items are required for order payment' });
-        }
-        if (!delivery_address) {
-          return res.status(400).json({ error: 'Delivery address required' });
-        }
+        if (!items?.length) return res.status(400).json({ error: 'Items are required for order payment' });
+        if (!delivery_address) return res.status(400).json({ error: 'Delivery address required' });
   
         order = await sql.begin(async (tx) => {
           const [newOrder] = await tx`
@@ -1851,12 +1856,10 @@ exports.getCategories = async (req, res) => {
       }
   
       // -----------------------
-      // 🚚 Handle DELIVERY payments
+      // Handle DELIVERY payments
       // -----------------------
       else if (payment_type === 'delivery') {
-        if (!order_id) {
-          return res.status(400).json({ error: 'order_id required for delivery payment' });
-        }
+        if (!order_id) return res.status(400).json({ error: 'order_id required for delivery payment' });
   
         const [existingOrder] = await sql`SELECT delivery_fee FROM orders WHERE id = ${order_id}`;
         if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
@@ -1866,18 +1869,18 @@ exports.getCategories = async (req, res) => {
       }
   
       // -----------------------
-      // 🔖 Generate tx_ref
+      // Generate tx_ref
       // -----------------------
       const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
   
       // -----------------------
-      // 💰 Flutterwave Payment Link
+      // Flutterwave Payment Link
       // -----------------------
       const payload = {
         tx_ref,
         amount: Number(totalAmount.toFixed(2)),
         currency: 'NGN',
-        redirect_url: 'oluwoflomobile://payment-success', // deep link for app
+        redirect_url: 'oluwoflomobile://payment-success',
         customer: {
           email: email || 'zoyaprocurementcompany@gmail.com',
           name: name || 'Valued Customer',
@@ -1910,23 +1913,25 @@ exports.getCategories = async (req, res) => {
       }
   
       // -----------------------
-      // 💾 Save payment record
+      // Save payment record
       // -----------------------
       await sql`
         INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
         VALUES (${uuidv4()}, ${order.id}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, NOW())
       `;
   
-      // 🆕 Add this: Create notification for the buyer after order/payment setup
-      await createNotification({
-        userId: user_id,  // Buyer's ID from the request
+      // -----------------------
+      // Send notification via exports.createNotification
+      // -----------------------
+      await exports.createNotification({
+        userId: user_id,
         title: 'Order Placed Successfully',
         body: `Your order #${order.id} has been placed. Total: ₦${totalAmount.toFixed(2)}. You'll receive updates soon.`,
-        data: { order_id: order.id },  // Optional: extra data for app navigation
+        data: { order_id: order.id },
       });
   
       // -----------------------
-      // ✅ Response
+      // Response
       // -----------------------
       return res.status(200).json({
         success: true,
