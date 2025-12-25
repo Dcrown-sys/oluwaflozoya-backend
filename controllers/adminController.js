@@ -1604,45 +1604,50 @@ exports.rateCourier = async (req, res) => {
 
 //   change password
 exports.changePassword = async (req, res) => {
-    const { userId, currentPassword, newPassword } = req.body;
-  
-    if (!userId || !currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-  
-    try {
-      // 1. Get the current password hash
-      const userResult = await sql`
-        SELECT password FROM users WHERE id = ${userId}
-      `;
-  
-      if (userResult.length === 0) {
-        return res.status(404).json({ error: 'User not found' });
-      }
-  
-      const user = userResult[0];
-  
-      // 2. Compare with current password
-      const isMatch = await bcrypt.compare(currentPassword, user.password);
-      if (!isMatch) {
-        return res.status(401).json({ error: 'Incorrect current password' });
-      }
-  
-      // 3. Hash new password
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-  
-      // 4. Update in DB
-      await sql`
-        UPDATE users SET password = ${hashedPassword} WHERE id = ${userId}
-      `;
-  
-      res.status(200).json({ message: 'Password changed successfully' });
-    } catch (err) {
-      console.error('Change password error:', err);
-      res.status(500).json({ error: 'Server error' });
-    }
-  };
+  const { userId, currentPassword, newPassword } = req.body;
 
+  if (!userId || !currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  try {
+    // 1. Get the current password hash
+    const userResult = await sql`
+      SELECT password FROM users WHERE id = ${userId}
+    `;
+
+    if (userResult.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const user = userResult[0];
+
+    // 2. Check if password hash exists (fix for the bcrypt error)
+    if (!user.password) {
+      console.error(`Password hash missing for user ID: ${userId}`);  // Log for debugging
+      return res.status(400).json({ error: 'Password not set for this user. Please reset your password.' });
+    }
+
+    // 3. Compare with current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ error: 'Incorrect current password' });
+    }
+
+    // 4. Hash new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // 5. Update in DB
+    await sql`
+      UPDATE users SET password = ${hashedPassword} WHERE id = ${userId}
+    `;
+
+    res.status(200).json({ message: 'Password changed successfully' });
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
 
 //   change phone number
 exports.changePhoneNumber = async (req, res) => {
