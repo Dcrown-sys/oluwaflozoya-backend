@@ -334,62 +334,97 @@ exports.createProduct = async (req, res) => {
   // ✅ Update product by ID (using postgres.js)
   exports.updateProduct = async (req, res) => {
     const { id } = req.params;
-    const {
-      name,
-      description,
-      unit,
-      min_order_qty,
-      price,
-      producer_id,
-      image_url,
-      stock_quantity
-    } = req.body;
+    const { name, description, unit, stock_quantity, weightKg, locations } = req.body;
   
     try {
-      const result = await sql`
-        UPDATE products SET 
-          name = ${name},
-          description = ${description},
-          unit = ${unit},
-          min_order_qty = ${min_order_qty},
-          price = ${price},
-          producer_id = ${producer_id},
-          image_url = ${image_url},
-          stock_quantity = ${stock_quantity}
-        WHERE id = ${id}
-      `;
+      // Prepare updates only for defined fields
+      const setParts = [];
+      const values = [];
+      let index = 1;
   
-      if (result.count === 0) {
-        return res.status(404).json({ message: 'Product not found' });
+      if (name !== undefined) {
+        setParts.push(`name = $${index++}`);
+        values.push(name);
+      }
+      if (description !== undefined) {
+        setParts.push(`description = $${index++}`);
+        values.push(description);
+      }
+      if (unit !== undefined) {
+        setParts.push(`unit = $${index++}`);
+        values.push(unit);
+      }
+      if (stock_quantity !== undefined) {
+        setParts.push(`stock_quantity = $${index++}`);
+        values.push(stock_quantity);
+      }
+      if (weightKg !== undefined) {
+        setParts.push(`weight_kg = $${index++}`);
+        values.push(weightKg);
       }
   
-      res.json({ message: 'Product updated successfully' });
+      let updatedProduct;
+      if (setParts.length > 0) {
+        // Build and execute the UPDATE query
+        const query = `UPDATE products SET ${setParts.join(', ')} WHERE id = $${index} RETURNING *`;
+        values.push(id);
+        const result = await sql.unsafe(query, values);
+        updatedProduct = result[0];
+        if (!updatedProduct) {
+          return res.status(404).json({ message: 'Product not found' });
+        }
+      } else {
+        // No core updates, just fetch the product
+        const [product] = await sql`SELECT * FROM products WHERE id = ${id}`;
+        if (!product) {
+          return res.status(404).json({ message: 'Product not found' });
+        }
+        updatedProduct = product;
+      }
+  
+      // Handle location price updates
+      if (locations && Array.isArray(locations)) {
+        for (const loc of locations) {
+          if (!loc.locationId || typeof loc.price !== 'number') {
+            return res.status(400).json({ message: 'Each location update must have locationId and price' });
+          }
+          // Validate location exists
+          const [existingLoc] = await sql`SELECT 1 FROM locations WHERE id = ${loc.locationId}`;
+          if (!existingLoc) {
+            return res.status(400).json({ message: `Invalid locationId: ${loc.locationId} does not exist` });
+          }
+  
+          // Upsert price (use 0 if transportCost is undefined)
+          const transportCost = loc.transportCost !== undefined ? loc.transportCost : 0;
+          await sql`
+            INSERT INTO product_locations (product_id, location_id, price, transport_cost)
+            VALUES (${id}, ${loc.locationId}, ${loc.price}, ${transportCost})
+            ON CONFLICT (product_id, location_id)
+            DO UPDATE SET price = EXCLUDED.price, transport_cost = EXCLUDED.transport_cost
+          `;
+        }
+      }
+  
+      res.json({ message: 'Product updated successfully', product: updatedProduct });
     } catch (err) {
-      console.error('❌ Error updating product:', err);
+      console.error('Update product error:', err);
       res.status(500).json({ message: 'Failed to update product' });
     }
   };
   
 
   // ✅ Delete product by ID (using postgres.js)
-exports.deleteProduct = async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const result = await sql`
-      DELETE FROM products WHERE id = ${id}
-    `;
-
-    if (result.count === 0) {
-      return res.status(404).json({ message: 'Product not found' });
+  exports.deleteProduct = async (req, res) => {
+    const { id } = req.params;
+    try {
+      await sql`DELETE FROM product_locations WHERE product_id = ${id}`;
+      await sql`DELETE FROM products WHERE id = ${id}`;
+      res.json({ message: 'Product deleted successfully' });
+    } catch (err) {
+      console.error('Delete product error:', err);
+      res.status(500).json({ message: 'Failed to delete product' });
     }
-
-    res.json({ message: 'Product deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting product:', err);
-    res.status(500).json({ message: 'Failed to delete product' });
-  }
-};
+  };
 
 
 
@@ -1196,53 +1231,155 @@ exports.getNearestCouriers = async (req, res) => {
       res.status(500).json({ message: 'Failed to update status' });
     }
   };
+
+  exports.addLocation = async (req, res) => {
+    try {
+      const { name, address, latitude, longitude, region } = req.body;
+  
+      if (!name || !address) {
+        return res.status(400).json({ message: 'Location name and address are required' });
+      }
+  
+      // Optional: Check for duplicates by address
+      const [existing] = await sql`SELECT * FROM locations WHERE address = ${address}`;
+      if (existing) {
+        return res.status(409).json({ message: 'Location with this address already exists' });
+      }
+  
+      let lat = latitude ? parseFloat(latitude) : null;
+      let lng = longitude ? parseFloat(longitude) : null;
+  
+      // If lat/lng not provided, geocode the address using Google Maps API
+      if (!lat || !lng) {
+        try {
+          const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+          const response = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_API_KEY}`);
+          if (response.data.results.length > 0) {
+            const location = response.data.results[0].geometry.location;
+            lat = location.lat;
+            lng = location.lng;
+          } else {
+            return res.status(400).json({ message: 'Unable to geocode address. Please provide latitude and longitude manually.' });
+          }
+        } catch (geocodeErr) {
+          console.error('Geocoding error:', geocodeErr);
+          return res.status(500).json({ message: 'Geocoding failed. Try manual lat/lng.' });
+        }
+      }
+  
+      // Validate lat/lng
+      if (isNaN(lat) || lat < -90 || lat > 90 || isNaN(lng) || lng < -180 || lng > 180) {
+        return res.status(400).json({ message: 'Invalid latitude or longitude' });
+      }
+  
+      const [location] = await sql`
+        INSERT INTO locations (name, address, latitude, longitude, region)
+        VALUES (${name}, ${address}, ${lat}, ${lng}, ${region})
+        RETURNING *
+      `;
+  
+      res.status(201).json({ message: 'Location created successfully', location });
+    } catch (err) {
+      console.error('Error adding location:', err);
+      res.status(500).json({ message: 'Failed to create location' });
+    }
+  };
   
 
   // ✅ Get all producers (for product creation dropdown)
 // Add Producer (to producers table)
 exports.addProducer = async (req, res) => {
-    try {
-      const { name } = req.body;
-  
-      if (!name) {
-        return res.status(400).json({ message: 'Producer name is required' });
-      }
-  
-      // Optional: Check if a producer with same name exists
-      const [existing] = await sql`
-        SELECT * FROM producers WHERE name = ${name}
-      `;
-  
-      if (existing) {
-        return res.status(409).json({ message: 'Producer with this name already exists' });
-      }
-  
-      const [producer] = await sql`
-        INSERT INTO producers (name)
-        VALUES (${name})
-        RETURNING id, name
-      `;
-  
-      res.status(201).json({ message: 'Producer created', producer });
-  
-    } catch (err) {
-      console.error('Error adding producer:', err);
-      res.status(500).json({ message: 'Failed to create producer' });
+  try {
+    const { name, location_id } = req.body;
+
+    if (!name || !location_id) {
+      return res.status(400).json({ message: 'Producer name and location_id are required' });
     }
-  };
-  
+
+    // Validate location exists
+    const [location] = await sql`SELECT id, latitude, longitude FROM locations WHERE id = ${location_id}`;
+    if (!location) {
+      return res.status(404).json({ message: 'Location not found' });
+    }
+
+    // Optional: Check if producer with same name in same location exists
+    const [existing] = await sql`SELECT * FROM producers WHERE name = ${name} AND location_id = ${location_id}`;
+    if (existing) {
+      return res.status(409).json({ message: 'Producer with this name already exists in this location' });
+    }
+
+    let logoUrl = null;
+    if (req.file) {
+      // Same logo upload logic as before
+      const imageBuffer = req.file.buffer;
+      const fileName = `${Date.now()}-${req.file.originalname}`;
+      const bucket = admin.storage().bucket();
+      const file = bucket.file(`producers/${fileName}`);
+
+      await file.save(imageBuffer, {
+        metadata: { contentType: req.file.mimetype },
+      });
+
+      [logoUrl] = await file.getSignedUrl({
+        action: 'read',
+        expires: '03-09-2491',
+      });
+    }
+
+    // Insert producer tied to location (inherit lat/lng)
+    const [producer] = await sql`
+      INSERT INTO producers (name, logo_url, latitude, longitude, location_id)
+      VALUES (${name}, ${logoUrl}, ${location.latitude}, ${location.longitude}, ${location_id})
+      RETURNING id, name, logo_url, latitude, longitude, location_id
+    `;
+
+    res.status(201).json({ message: 'Producer created successfully', producer });
+  } catch (err) {
+    console.error('Error adding producer:', err);
+    res.status(500).json({ message: 'Failed to create producer' });
+  }
+};
   
   // Get All Producers (from producers table)
   exports.getAllProducers = async (req, res) => {
     try {
       const producers = await sql`
-        SELECT id, name, created_at FROM producers
-        ORDER BY created_at DESC
+        SELECT 
+          p.id, 
+          p.name, 
+          p.logo_url, 
+          p.latitude, 
+          p.longitude, 
+          l.name AS location_name,  -- New: Readable location name from locations table
+          p.created_at
+        FROM producers p
+        LEFT JOIN locations l ON p.location_id = l.id  -- JOIN to get location name
+        ORDER BY p.created_at DESC
       `;
       res.status(200).json(producers);
     } catch (err) {
       console.error('Error fetching producers:', err);
       res.status(500).json({ error: 'Failed to fetch producers' });
+    }
+    
+  };
+
+  exports.getProductsByProducer = async (req, res) => {
+    const { producer_id } = req.params;
+    try {
+      const products = await sql`
+        SELECT p.id, p.name, p.description, p.unit, p.stock_quantity, p.image_url, p.weight_kg,
+               pl.location_id, l.name AS location_name, pl.price, pl.transport_cost
+        FROM products p
+        LEFT JOIN product_locations pl ON p.id = pl.product_id
+        LEFT JOIN locations l ON pl.location_id = l.id
+        WHERE p.producer_id = ${producer_id}
+        ORDER BY p.created_at DESC
+      `;
+      res.status(200).json(products);
+    } catch (err) {
+      console.error('Error fetching products:', err);
+      res.status(500).json({ error: 'Failed to fetch products' });
     }
   };
   
@@ -1254,19 +1391,33 @@ exports.addProducer = async (req, res) => {
         name,
         description,
         unit,
-        price,
         stock_quantity,
-        producer_name,
+        producer_id,  // Changed: Now requires producer_id instead of producer_name
         category_slug,
-        category_name, // new optional field for category name
+        category_name,
+        locations,
+        producer_location,
+        weightKg
       } = req.body;
   
-      if (!name || !price || !stock_quantity || !unit || !producer_name || !category_slug) {
-        return res.status(400).json({ message: 'Missing required fields' });
+      // Parse locations if it's a string
+      let parsedLocations = [];
+      if (locations) {
+        parsedLocations = typeof locations === 'string' ? JSON.parse(locations) : locations;
+      }
+  
+      if (!name || !stock_quantity || !unit || !producer_id || !category_slug || parsedLocations.length === 0) {
+        return res.status(400).json({ message: 'Missing required fields (name, stock_quantity, unit, producer_id, category_slug, and at least one location)' });
       }
   
       if (!req.file) {
         return res.status(400).json({ message: 'Image file is required' });
+      }
+  
+      // Validate producer exists
+      const [producer] = await sql`SELECT id FROM producers WHERE id = ${producer_id}`;
+      if (!producer) {
+        return res.status(404).json({ message: 'Producer not found' });
       }
   
       // Upload image to Firebase Storage
@@ -1284,24 +1435,21 @@ exports.addProducer = async (req, res) => {
         expires: '03-09-2491',
       });
   
-      // Get or create producer
-      const [producer] = await sql`
-        SELECT id FROM producers WHERE name = ${producer_name}
-      `;
-      if (!producer) {
-        return res.status(404).json({ message: 'Producer not found' });
+      // Update producer with location if provided (optional)
+      if (producer_location && producer_location.lat && producer_location.lng) {
+        await sql`
+          UPDATE producers
+          SET latitude = ${producer_location.lat}, longitude = ${producer_location.lng}
+          WHERE id = ${producer_id}
+        `;
       }
   
       // Get or create category
-      let category = await sql`
-        SELECT id FROM categories WHERE slug = ${category_slug}
-      `;
+      let category = await sql`SELECT id FROM categories WHERE slug = ${category_slug}`;
       if (!category || category.length === 0) {
-        // If category doesn't exist but category_name is provided, create it
         if (!category_name) {
           return res.status(404).json({ message: 'Category not found and no new category name provided' });
         }
-  
         const [newCategory] = await sql`
           INSERT INTO categories (name, slug)
           VALUES (${category_name}, ${category_slug})
@@ -1314,47 +1462,63 @@ exports.addProducer = async (req, res) => {
   
       const created_by = req.admin?.id || 'e73622f4-7dde-4d15-8d4c-0bc764c4cf52';
   
-      // Log all values BEFORE the SQL insert:
-console.log({
-    name,
-    description,
-    unit,
-    price,
-    stock_quantity,
-    imageUrl,
-    producerId: producer?.id,
-    categoryId: category?.id,
-    createdBy: created_by,
-  });
+      // Insert product
+      const [product] = await sql`
+        INSERT INTO products (
+          name,
+          description,
+          unit,
+          price,
+          stock_quantity,
+          image_url,
+          producer_id,
+          category_id,
+          created_by,
+          weight_kg
+        )
+        VALUES (
+          ${name},
+          ${description},
+          ${unit},
+          NULL,
+          ${stock_quantity},
+          ${imageUrl},
+          ${producer_id},
+          ${category.id},
+          ${created_by},
+          ${weightKg || 1}
+        )
+        RETURNING *
+      `;
   
-  // Now insert product
-  const [product] = await sql`
-    INSERT INTO products (
-      name,
-      description,
-      unit,
-      price,
-      stock_quantity,
-      image_url,
-      producer_id,
-      category_id,
-      created_by
-    )
-    VALUES (
-      ${name},
-      ${description},
-      ${unit},
-      ${price},
-      ${stock_quantity},
-      ${imageUrl},
-      ${producer.id},
-      ${category.id},
-      ${created_by}
-    )
-    RETURNING *
-  `;
+      // Insert into product_locations for each location (with validation)
+      for (const loc of parsedLocations) {
+        if (!loc.locationId || !loc.price) {
+          return res.status(400).json({ message: 'Each location must have locationId and price' });
+        }
   
-      res.status(201).json({ message: 'Product added successfully', product });
+        // NEW: Validate location exists to prevent FK errors
+        const [existingLoc] = await sql`SELECT 1 FROM locations WHERE id = ${loc.locationId}`;
+        if (!existingLoc) {
+          return res.status(400).json({ message: `Invalid locationId: ${loc.locationId} does not exist` });
+        }
+  
+        // Update locations table with lat/lng if provided
+        if (loc.lat && loc.lng) {
+          await sql`
+            UPDATE locations
+            SET latitude = ${loc.lat}, longitude = ${loc.lng}
+            WHERE id = ${loc.locationId}
+          `;
+        }
+  
+        await sql`
+          INSERT INTO product_locations (product_id, location_id, price, transport_cost)
+          VALUES (${product.id}, ${loc.locationId}, ${loc.price}, ${loc.transportCost || 0})
+        `;
+      }
+  
+      res.status(201).json({ message: 'Product added successfully with locations', product });
     } catch (err) {
       console.error('❌ Add product error:', err);
       res.status(500).json({ message: 'Failed to add product' });
@@ -1362,8 +1526,63 @@ console.log({
   };
   
   
-
+  exports.calculateTransport = async (req, res) => {
+    const { originLat, originLng, destLat, destLng, weightKg = 1, baseCost = 0 } = req.body;
+    try {
+      // Validate inputs
+      if (!originLat || !originLng || !destLat || !destLng) {
+        return res.status(400).json({ error: 'Missing required coordinates (originLat, originLng, destLat, destLng)' });
+      }
   
+      const GOOGLE_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+      if (!GOOGLE_API_KEY) {
+        return res.status(500).json({ error: 'Google API key not configured' });
+      }
+  
+      const response = await axios.get(`https://maps.googleapis.com/maps/api/distancematrix/json?origins=${originLat},${originLng}&destinations=${destLat},${destLng}&key=${GOOGLE_API_KEY}`);
+      
+      // Check API response status
+      if (response.data.status !== 'OK') {
+        return res.status(400).json({ error: `Google API error: ${response.data.status}` });
+      }
+  
+      const element = response.data.rows[0]?.elements[0];
+      if (!element || element.status !== 'OK') {
+        return res.status(400).json({ error: 'No route found or invalid coordinates' });
+      }
+  
+      const distanceKm = element.distance.value / 1000;
+  
+      // Transport methods (unchanged)
+      const methods = [
+        { name: 'Motorcycle', capacity: 5, ratePerKm: 2, loadFactor: 0.5 },
+        { name: 'Cab', capacity: 50, ratePerKm: 5, loadFactor: 1 },
+        { name: 'Bus', capacity: Infinity, ratePerKm: 10, loadFactor: 2 }
+      ];
+  
+      let selectedMethod = methods[0];
+      for (const method of methods) {
+        if (weightKg <= method.capacity) {
+          selectedMethod = method;
+          break;
+        }
+      }
+  
+      const distanceCost = distanceKm * selectedMethod.ratePerKm;
+      const loadCost = weightKg * selectedMethod.loadFactor;
+      const totalCost = distanceCost + loadCost + baseCost;
+  
+      res.json({
+        distanceKm,
+        method: selectedMethod.name,
+        estimatedCost: totalCost,
+        breakdown: { distanceCost, loadCost, baseCost }
+      });
+    } catch (err) {
+      console.error('Transport calculation error:', err);
+      res.status(500).json({ error: 'Failed to calculate transport' });
+    }
+  };
   
   
 // PROMO CODE: Validate

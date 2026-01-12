@@ -62,10 +62,12 @@ router.get('/products/featured', adminController.getFeaturedProducts);
 router.get('/trending-products', adminController.getTrendingProducts);
 router.get('/best-sellers', adminController.getBestSellers);
 router.get('/trending', adminController.getTrending);
-
+router.post('/locations', verifyAdmin, adminController.addLocation);
 router.post('/add-product', verifyToken, upload.single('image'), adminController.addProduct);
 router.put('/products/:id', adminController.updateProduct);
 router.delete('/products/:id', adminController.deleteProduct);
+router.get('/producers/:producer_id/products', verifyAdmin, adminController.getProductsByProducer);
+router.post('/calculate-transport', verifyAdmin, adminController.calculateTransport);
 
 router.post('/products/featured', verifyAdmin, adminController.setFeaturedProducts);
 router.delete('/products/featured', verifyAdmin, adminController.removeFeaturedProducts);
@@ -74,7 +76,7 @@ router.delete('/products/featured', verifyAdmin, adminController.removeFeaturedP
 // Producer Management
 // ============================
 router.get('/producers', verifyAdmin, adminController.getAllProducers);
-router.post('/producers', verifyAdmin, adminController.addProducer);
+router.post('/producers', upload.single('logo'), verifyAdmin, adminController.addProducer);
 router.get('/producer/:producerId/products', adminController.getProductsByProducer);
 
 // ============================
