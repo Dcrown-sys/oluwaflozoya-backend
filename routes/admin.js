@@ -66,7 +66,6 @@ router.post('/locations', verifyAdmin, adminController.addLocation);
 router.post('/add-product', verifyToken, upload.single('image'), adminController.addProduct);
 router.put('/products/:id', adminController.updateProduct);
 router.delete('/products/:id', adminController.deleteProduct);
-router.get('/producers/:producer_id/products', verifyAdmin, adminController.getProductsByProducer);
 router.post('/calculate-transport', verifyAdmin, adminController.calculateTransport);
 
 router.post('/products/featured', verifyAdmin, adminController.setFeaturedProducts);

@@ -1365,15 +1365,29 @@ exports.addProducer = async (req, res) => {
   };
 
   exports.getProductsByProducer = async (req, res) => {
-    const { producer_id } = req.params;
+    const { producerId } = req.params;
+    if (!producerId) {
+      return res.status(400).json({ message: "producerId is required" });
+    }
     try {
       const products = await sql`
         SELECT p.id, p.name, p.description, p.unit, p.stock_quantity, p.image_url, p.weight_kg,
-               pl.location_id, l.name AS location_name, pl.price, pl.transport_cost
+               COALESCE(
+                 JSON_AGG(
+                   JSON_BUILD_OBJECT(
+                     'location_id', pl.location_id,
+                     'location_name', l.name,
+                     'price', pl.price,
+                     'transport_cost', pl.transport_cost
+                   )
+                 ) FILTER (WHERE pl.location_id IS NOT NULL),
+                 '[]'::json
+               ) AS locations
         FROM products p
         LEFT JOIN product_locations pl ON p.id = pl.product_id
         LEFT JOIN locations l ON pl.location_id = l.id
-        WHERE p.producer_id = ${producer_id}
+        WHERE p.producer_id = ${producerId}
+        GROUP BY p.id, p.name, p.description, p.unit, p.stock_quantity, p.image_url, p.weight_kg
         ORDER BY p.created_at DESC
       `;
       res.status(200).json(products);
@@ -1382,7 +1396,6 @@ exports.addProducer = async (req, res) => {
       res.status(500).json({ error: 'Failed to fetch products' });
     }
   };
-  
   // controllers/adminController.js
 
   exports.addProduct = async (req, res) => {
