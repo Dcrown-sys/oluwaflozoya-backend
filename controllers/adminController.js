@@ -1237,88 +1237,55 @@ exports.getNearestCouriers = async (req, res) => {
       const { name, address, latitude, longitude, region } = req.body;
   
       if (!name || !address) {
-        return res.status(400).json({
-          message: 'Location name and address are required',
-        });
+        return res.status(400).json({ message: 'Location name and address are required' });
       }
   
-      // Check duplicate by address
-      const [existing] = await sql`
-        SELECT id FROM locations WHERE address = ${address}
-      `;
+      // Optional: Check for duplicates by address
+      const [existing] = await sql`SELECT * FROM locations WHERE address = ${address}`;
       if (existing) {
-        return res.status(409).json({
-          message: 'Location with this address already exists',
-        });
+        return res.status(409).json({ message: 'Location with this address already exists' });
       }
   
       let lat = latitude ? parseFloat(latitude) : null;
       let lng = longitude ? parseFloat(longitude) : null;
-      let finalRegion = region || null;
   
-      // Geocode if lat/lng missing OR region missing
-      if (!lat || !lng || !finalRegion) {
-        const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-  
-        const geoRes = await axios.get(
-          `https://maps.googleapis.com/maps/api/geocode/json`,
-          {
-            params: {
-              address,
-              key: GOOGLE_API_KEY,
-            },
+      // If lat/lng not provided, geocode the address using Google Maps API
+      if (!lat || !lng) {
+        try {
+          const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+          const response = await axios.get(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${GOOGLE_API_KEY}`);
+          if (response.data.results.length > 0) {
+            const location = response.data.results[0].geometry.location;
+            lat = location.lat;
+            lng = location.lng;
+          } else {
+            return res.status(400).json({ message: 'Unable to geocode address. Please provide latitude and longitude manually.' });
           }
-        );
-  
-        const result = geoRes.data.results?.[0];
-        if (!result) {
-          return res.status(400).json({
-            message: 'Unable to geocode address',
-          });
-        }
-  
-        // Fill lat/lng if missing
-        lat = lat ?? result.geometry.location.lat;
-        lng = lng ?? result.geometry.location.lng;
-  
-        // Extract region (admin area level 1)
-        if (!finalRegion) {
-          const regionComponent = result.address_components.find(c =>
-            c.types.includes('administrative_area_level_1')
-          );
-          finalRegion = regionComponent?.long_name || 'Unknown';
+        } catch (geocodeErr) {
+          console.error('Geocoding error:', geocodeErr);
+          return res.status(500).json({ message: 'Geocoding failed. Try manual lat/lng.' });
         }
       }
   
-      // Validate coordinates
-      if (
-        isNaN(lat) || lat < -90 || lat > 90 ||
-        isNaN(lng) || lng < -180 || lng > 180
-      ) {
-        return res.status(400).json({
-          message: 'Invalid latitude or longitude',
-        });
+      // Validate lat/lng
+      if (isNaN(lat) || lat < -90 || lat > 90 || isNaN(lng) || lng < -180 || lng > 180) {
+        return res.status(400).json({ message: 'Invalid latitude or longitude' });
       }
   
       const [location] = await sql`
         INSERT INTO locations (name, address, latitude, longitude, region)
-        VALUES (${name}, ${address}, ${lat}, ${lng}, ${finalRegion})
+        VALUES (${name}, ${address}, ${lat}, ${lng}, ${region})
         RETURNING *
       `;
   
-      res.status(201).json({
-        message: 'Location created successfully',
-        location,
-      });
-  
+      res.status(201).json({ message: 'Location created successfully', location });
     } catch (err) {
-      console.error('❌ Error adding location:', err);
-      res.status(500).json({
-        message: 'Failed to create location',
-      });
+      console.error('Error adding location:', err);
+      res.status(500).json({ message: 'Failed to create location' });
     }
   };
   
+
   // ✅ Get all producers (for product creation dropdown)
 // Add Producer (to producers table)
 exports.addProducer = async (req, res) => {
@@ -1630,6 +1597,20 @@ exports.addProducer = async (req, res) => {
     }
   };
   
+  // ✅ Get all locations (for dropdowns in frontend)
+exports.getAllLocations = async (req, res) => {
+  try {
+    const locations = await sql`
+      SELECT id, name, address, latitude, longitude, region
+      FROM locations
+      ORDER BY name ASC
+    `;
+    res.status(200).json(locations);
+  } catch (err) {
+    console.error('Error fetching locations:', err);
+    res.status(500).json({ error: 'Failed to fetch locations' });
+  }
+};
   
 // PROMO CODE: Validate
 exports.validatePromoCode = async (req, res) => {

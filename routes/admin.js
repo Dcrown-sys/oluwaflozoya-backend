@@ -67,6 +67,7 @@ router.post('/add-product', verifyToken, upload.single('image'), adminController
 router.put('/products/:id', adminController.updateProduct);
 router.delete('/products/:id', adminController.deleteProduct);
 router.post('/calculate-transport', verifyAdmin, adminController.calculateTransport);
+router.get('/locations', verifyAdmin, adminController.getAllLocations);
 
 router.post('/products/featured', verifyAdmin, adminController.setFeaturedProducts);
 router.delete('/products/featured', verifyAdmin, adminController.removeFeaturedProducts);
