@@ -1351,10 +1351,11 @@ exports.addProducer = async (req, res) => {
           p.logo_url, 
           p.latitude, 
           p.longitude, 
-          l.name AS location_name,  -- New: Readable location name from locations table
+          l.id AS location_id,  -- Added: Include location ID
+          l.name AS location_name,  -- Existing: Readable location name
           p.created_at
         FROM producers p
-        LEFT JOIN locations l ON p.location_id = l.id  -- JOIN to get location name
+        LEFT JOIN locations l ON p.location_id = l.id  -- JOIN to get location details
         ORDER BY p.created_at DESC
       `;
       res.status(200).json(producers);
@@ -1362,7 +1363,6 @@ exports.addProducer = async (req, res) => {
       console.error('Error fetching producers:', err);
       res.status(500).json({ error: 'Failed to fetch producers' });
     }
-    
   };
 
   exports.getProductsByProducer = async (req, res) => {
