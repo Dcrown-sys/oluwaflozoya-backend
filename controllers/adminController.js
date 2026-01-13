@@ -1481,32 +1481,32 @@ exports.addProducer = async (req, res) => {
   
       // Insert product (store imageUrls as JSON array)
       const [product] = await sql`
-        INSERT INTO products (
-          name,
-          description,
-          unit,
-          price,
-          stock_quantity,
-          image_url,
-          producer_id,
-          category_id,
-          created_by,
-          weight_kg
-        )
-        VALUES (
-          ${name},
-          ${description},
-          ${unit},
-          NULL,
-          ${stock_quantity},
-          ${JSON.stringify(imageUrls)},  // Store as JSON array
-          ${producer_id},
-          ${category.id},
-          ${created_by},
-          ${weightKg || 1}
-        )
-        RETURNING *
-      `;
+      INSERT INTO products (
+        name,
+        description,
+        unit,
+        price,
+        stock_quantity,
+        image_url,
+        producer_id,
+        category_id,
+        created_by,
+        weight_kg
+      )
+      VALUES (
+        ${name},
+        ${description},
+        ${unit},
+        NULL,
+        ${stock_quantity},
+        ${imageUrls},  // Pass the array directly (no JSON.stringify)
+        ${producer_id},
+        ${category.id},
+        ${created_by},
+        ${weightKg || 1}
+      )
+      RETURNING *
+    `;
   
       // Insert into product_locations for each location (with validation)
       for (const loc of parsedLocations) {
