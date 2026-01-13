@@ -1240,16 +1240,18 @@ exports.getNearestCouriers = async (req, res) => {
         return res.status(400).json({ message: 'Location name and address are required' });
       }
   
-      // Optional: Check for duplicates by address
+      // Ensure no undefined values; set defaults
+      let lat = latitude ? parseFloat(latitude) : null;
+      let lng = longitude ? parseFloat(longitude) : null;
+      let reg = region !== undefined ? region : null;  // Prevents undefined
+  
+      // Check for duplicates
       const [existing] = await sql`SELECT * FROM locations WHERE address = ${address}`;
       if (existing) {
         return res.status(409).json({ message: 'Location with this address already exists' });
       }
   
-      let lat = latitude ? parseFloat(latitude) : null;
-      let lng = longitude ? parseFloat(longitude) : null;
-  
-      // If lat/lng not provided, geocode the address using Google Maps API
+      // Geocode if lat/lng not provided
       if (!lat || !lng) {
         try {
           const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
@@ -1267,14 +1269,14 @@ exports.getNearestCouriers = async (req, res) => {
         }
       }
   
-      // Validate lat/lng
+      // Validate lat/lng (now they should be numbers)
       if (isNaN(lat) || lat < -90 || lat > 90 || isNaN(lng) || lng < -180 || lng > 180) {
         return res.status(400).json({ message: 'Invalid latitude or longitude' });
       }
   
       const [location] = await sql`
         INSERT INTO locations (name, address, latitude, longitude, region)
-        VALUES (${name}, ${address}, ${lat}, ${lng}, ${region})
+        VALUES (${name}, ${address}, ${lat}, ${lng}, ${reg})
         RETURNING *
       `;
   
@@ -1284,7 +1286,6 @@ exports.getNearestCouriers = async (req, res) => {
       res.status(500).json({ message: 'Failed to create location' });
     }
   };
-  
 
   // ✅ Get all producers (for product creation dropdown)
 // Add Producer (to producers table)
