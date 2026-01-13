@@ -63,7 +63,7 @@ router.get('/trending-products', adminController.getTrendingProducts);
 router.get('/best-sellers', adminController.getBestSellers);
 router.get('/trending', adminController.getTrending);
 router.post('/locations', verifyAdmin, adminController.addLocation);
-router.post('/add-product', verifyToken, upload.single('image'), adminController.addProduct);
+router.post('/add-product', verifyToken, upload.array('images', 10), adminController.addProduct);
 router.put('/products/:id', adminController.updateProduct);
 router.delete('/products/:id', adminController.deleteProduct);
 router.post('/calculate-transport', verifyAdmin, adminController.calculateTransport);

@@ -1406,7 +1406,7 @@ exports.addProducer = async (req, res) => {
         description,
         unit,
         stock_quantity,
-        producer_id,  // Changed: Now requires producer_id instead of producer_name
+        producer_id,
         category_slug,
         category_name,
         locations,
@@ -1424,8 +1424,9 @@ exports.addProducer = async (req, res) => {
         return res.status(400).json({ message: 'Missing required fields (name, stock_quantity, unit, producer_id, category_slug, and at least one location)' });
       }
   
-      if (!req.file) {
-        return res.status(400).json({ message: 'Image file is required' });
+      // Validate at least 2 images
+      if (!req.files || req.files.length < 2) {
+        return res.status(400).json({ message: 'At least 2 image files are required' });
       }
   
       // Validate producer exists
@@ -1434,20 +1435,22 @@ exports.addProducer = async (req, res) => {
         return res.status(404).json({ message: 'Producer not found' });
       }
   
-      // Upload image to Firebase Storage
-      const imageBuffer = req.file.buffer;
-      const fileName = `${Date.now()}-${req.file.originalname}`;
-      const bucket = admin.storage().bucket();
-      const file = bucket.file(`products/${fileName}`);
-  
-      await file.save(imageBuffer, {
-        metadata: { contentType: req.file.mimetype },
-      });
-  
-      const [imageUrl] = await file.getSignedUrl({
-        action: 'read',
-        expires: '03-09-2491',
-      });
+      // Upload multiple images to Firebase Storage
+      const imageUrls = [];
+      for (const file of req.files) {
+        const imageBuffer = file.buffer;
+        const fileName = `${Date.now()}-${file.originalname}`;
+        const bucket = admin.storage().bucket();
+        const firebaseFile = bucket.file(`products/${fileName}`);
+        await firebaseFile.save(imageBuffer, {
+          metadata: { contentType: file.mimetype },
+        });
+        const [imageUrl] = await firebaseFile.getSignedUrl({
+          action: 'read',
+          expires: '03-09-2491',
+        });
+        imageUrls.push(imageUrl);
+      }
   
       // Update producer with location if provided (optional)
       if (producer_location && producer_location.lat && producer_location.lng) {
@@ -1476,7 +1479,7 @@ exports.addProducer = async (req, res) => {
   
       const created_by = req.admin?.id || 'e73622f4-7dde-4d15-8d4c-0bc764c4cf52';
   
-      // Insert product
+      // Insert product (store imageUrls as JSON array)
       const [product] = await sql`
         INSERT INTO products (
           name,
@@ -1496,7 +1499,7 @@ exports.addProducer = async (req, res) => {
           ${unit},
           NULL,
           ${stock_quantity},
-          ${imageUrl},
+          ${JSON.stringify(imageUrls)},  // Store as JSON array
           ${producer_id},
           ${category.id},
           ${created_by},
@@ -1511,7 +1514,7 @@ exports.addProducer = async (req, res) => {
           return res.status(400).json({ message: 'Each location must have locationId and price' });
         }
   
-        // NEW: Validate location exists to prevent FK errors
+        // Validate location exists to prevent FK errors
         const [existingLoc] = await sql`SELECT 1 FROM locations WHERE id = ${loc.locationId}`;
         if (!existingLoc) {
           return res.status(400).json({ message: `Invalid locationId: ${loc.locationId} does not exist` });
@@ -1538,7 +1541,6 @@ exports.addProducer = async (req, res) => {
       res.status(500).json({ message: 'Failed to add product' });
     }
   };
-  
   
   exports.calculateTransport = async (req, res) => {
     const { originLat, originLng, destLat, destLng, weightKg = 1, baseCost = 0 } = req.body;
