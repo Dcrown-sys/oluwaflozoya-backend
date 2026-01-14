@@ -1405,6 +1405,7 @@ exports.addProducer = async (req, res) => {
         name,
         description,
         unit,
+        price,  // Added: Accept price as top-level field
         stock_quantity,
         producer_id,
         category_slug,
@@ -1420,8 +1421,8 @@ exports.addProducer = async (req, res) => {
         parsedLocations = typeof locations === 'string' ? JSON.parse(locations) : locations;
       }
   
-      if (!name || !stock_quantity || !unit || !producer_id || !category_slug || parsedLocations.length === 0) {
-        return res.status(400).json({ message: 'Missing required fields (name, stock_quantity, unit, producer_id, category_slug, and at least one location)' });
+      if (!name || !stock_quantity || !unit || !producer_id || !category_slug || !price || parsedLocations.length === 0) {
+        return res.status(400).json({ message: 'Missing required fields (name, stock_quantity, unit, producer_id, category_slug, price, and at least one location)' });
       }
   
       // Validate at least 2 images
@@ -1447,7 +1448,7 @@ exports.addProducer = async (req, res) => {
         });
         const [imageUrl] = await firebaseFile.getSignedUrl({
           action: 'read',
-          expires: '03-09-2491',
+          expires: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year from now
         });
         imageUrls.push(imageUrl);
       }
@@ -1479,63 +1480,76 @@ exports.addProducer = async (req, res) => {
   
       const created_by = req.admin?.id || 'e73622f4-7dde-4d15-8d4c-0bc764c4cf52';
   
-      // Insert product (store imageUrls as JSON array)
-      const [product] = await sql`
-  INSERT INTO products (
-    name,
-    description,
-    unit,
-    price,
-    stock_quantity,
-    image_url,
-    producer_id,
-    category_id,
-    created_by,
-    weight_kg
-  )
-  VALUES (
-    ${name},
-    ${description},
-    ${unit},
-    NULL,
-    ${stock_quantity},
-    ${JSON.stringify(imageUrls)},  // Explicitly stringify the array to JSON
-    ${producer_id},
-    ${category.id},
-    ${created_by},
-    ${weightKg || 1}
-  )
-  RETURNING *
-`;
+      // Insert product (store single image URL and price)
+      const imageUrl = imageUrls[0] || null;  // Store only the first image URL
   
-      // Insert into product_locations for each location (with validation)
-      for (const loc of parsedLocations) {
-        if (!loc.locationId || !loc.price) {
-          return res.status(400).json({ message: 'Each location must have locationId and price' });
+      try {
+        const result = await sql`
+          INSERT INTO products (
+            name,
+            description,
+            unit,
+            price,
+            stock_quantity,
+            image_url,
+            producer_id,
+            category_id,
+            created_by,
+            weight_kg
+          )
+          VALUES (
+            ${name},
+            ${description},
+            ${unit},
+            ${parseFloat(price)},
+            ${stock_quantity},
+            ${imageUrl},
+            ${producer_id},
+            ${category.id},
+            ${created_by},
+            ${weightKg || 1}
+          )
+          RETURNING *
+        `;
+  
+        const product = result[0];
+        if (!product) {
+          throw new Error('Product insert failed - no row returned');
         }
   
-        // Validate location exists to prevent FK errors
-        const [existingLoc] = await sql`SELECT 1 FROM locations WHERE id = ${loc.locationId}`;
-        if (!existingLoc) {
-          return res.status(400).json({ message: `Invalid locationId: ${loc.locationId} does not exist` });
-        }
+        // Insert into product_locations for each location (with price)
+        for (const loc of parsedLocations) {
+          if (!loc.locationId) {
+            return res.status(400).json({ message: 'Each location must have locationId' });
+          }
   
-        // Update locations table with lat/lng if provided
-        if (loc.lat && loc.lng) {
+          // Validate location exists
+          const [existingLoc] = await sql`SELECT 1 FROM locations WHERE id = ${loc.locationId}`;
+          if (!existingLoc) {
+            return res.status(400).json({ message: `Invalid locationId: ${loc.locationId} does not exist` });
+          }
+  
+          // Update locations table with lat/lng if provided
+          if (loc.lat && loc.lng) {
+            await sql`
+              UPDATE locations
+              SET latitude = ${loc.lat}, longitude = ${loc.lng}
+              WHERE id = ${loc.locationId}
+            `;
+          }
+  
+          // Updated: Include price in product_locations INSERT
           await sql`
-            UPDATE locations
-            SET latitude = ${loc.lat}, longitude = ${loc.lng}
-            WHERE id = ${loc.locationId}
+            INSERT INTO product_locations (product_id, location_id, price, transport_cost)
+            VALUES (${product.id}, ${loc.locationId}, ${parseFloat(price)}, ${loc.transportCost || 0})
           `;
         }
   
-        await sql`
-          INSERT INTO product_locations (product_id, location_id, price, transport_cost)
-          VALUES (${product.id}, ${loc.locationId}, ${loc.price}, ${loc.transportCost || 0})
-        `;
+        res.status(201).json({ message: 'Product added successfully with locations', product });
+      } catch (insertError) {
+        console.error('Insert error:', insertError);  // Log DB insert error
+        throw insertError;  // Re-throw to outer catch
       }
-  
-      res.status(201).json({ message: 'Product added successfully with locations', product });
     } catch (err) {
       console.error('❌ Add product error:', err);
       res.status(500).json({ message: 'Failed to add product' });
