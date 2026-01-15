@@ -1462,17 +1462,22 @@ exports.addProducer = async (req, res) => {
         `;
       }
   
-      // Get or create category
+    // Get or create category
 let category = await sql`SELECT id FROM categories WHERE slug = ${category_slug}`;
 if (!category || category.length === 0) {
-  // Use category_slug as the name if category_name is not provided
   const categoryName = category_name || category_slug;
-  const [newCategory] = await sql`
-    INSERT INTO categories (name, slug)
-    VALUES (${categoryName}, ${category_slug})
-    RETURNING *
-  `;
-  category = newCategory;
+  // Check if a category with this name already exists (to avoid duplicate name error)
+  const existingByName = await sql`SELECT id, slug FROM categories WHERE name = ${categoryName}`;
+  if (existingByName && existingByName.length > 0) {
+    category = existingByName[0];  // Reuse existing category
+  } else {
+    const [newCategory] = await sql`
+      INSERT INTO categories (name, slug)
+      VALUES (${categoryName}, ${category_slug})
+      RETURNING *
+    `;
+    category = newCategory;
+  }
 } else {
   category = category[0];
 }
