@@ -1997,7 +1997,14 @@ exports.getCategories = async (req, res) => {
         return res.status(400).json({ success: false, message: 'user_lat and user_lng required for distance sorting' });
       }
   
-      let query = sql`
+      // Build ORDER BY dynamically (safe for postgres.js)
+      let orderBy = 'p.name ASC';  // Default
+      if (distanceSort) {
+        orderBy = 'distance_km ASC';
+      }
+  
+      // Execute query with conditional elements (no append needed)
+      const producers = await sql`
         SELECT DISTINCT 
           p.id, p.name, p.location, p.phone, p.logo_url, p.latitude, p.longitude,
           CASE WHEN ${distanceSort} THEN 
@@ -2006,13 +2013,11 @@ exports.getCategories = async (req, res) => {
         FROM producers p
         INNER JOIN products pr ON p.id = pr.producer_id
         WHERE pr.category_id = ${categoryId} AND pr.available = true
+        ORDER BY ${sql.unsafe(orderBy)}
+        LIMIT ${limitNum} OFFSET ${offsetNum}
       `;
   
-      if (sort_by === 'name_asc') query.append(sql` ORDER BY p.name ASC`);
-      else if (distanceSort) query.append(sql` ORDER BY distance_km ASC`);
-      query.append(sql` LIMIT ${limitNum} OFFSET ${offsetNum}`);
-  
-      const producers = await query;
+      // Format distance
       producers.forEach(p => { if (p.distance_km) p.distance_km = parseFloat(p.distance_km.toFixed(2)); });
   
       res.json({
