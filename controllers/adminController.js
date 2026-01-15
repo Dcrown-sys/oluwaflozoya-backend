@@ -1463,20 +1463,19 @@ exports.addProducer = async (req, res) => {
       }
   
       // Get or create category
-      let category = await sql`SELECT id FROM categories WHERE slug = ${category_slug}`;
-      if (!category || category.length === 0) {
-        if (!category_name) {
-          return res.status(404).json({ message: 'Category not found and no new category name provided' });
-        }
-        const [newCategory] = await sql`
-          INSERT INTO categories (name, slug)
-          VALUES (${category_name}, ${category_slug})
-          RETURNING *
-        `;
-        category = newCategory;
-      } else {
-        category = category[0];
-      }
+let category = await sql`SELECT id FROM categories WHERE slug = ${category_slug}`;
+if (!category || category.length === 0) {
+  // Use category_slug as the name if category_name is not provided
+  const categoryName = category_name || category_slug;
+  const [newCategory] = await sql`
+    INSERT INTO categories (name, slug)
+    VALUES (${categoryName}, ${category_slug})
+    RETURNING *
+  `;
+  category = newCategory;
+} else {
+  category = category[0];
+}
   
       const created_by = req.admin?.id || 'e73622f4-7dde-4d15-8d4c-0bc764c4cf52';
   
