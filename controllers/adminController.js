@@ -1938,16 +1938,21 @@ exports.changePhoneNumber = async (req, res) => {
 // ✅ GET ALL CATEGORIES
 // =============================
 exports.getCategories = async (req, res) => {
-    try {
-      const categories = await sql`
-        SELECT id, name FROM categories ORDER BY name
-      `;
-      res.status(200).json(categories);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: 'Failed to fetch categories' });
-    }
-  };
+  try {
+    const categories = await sql`
+      SELECT id, name, slug FROM categories ORDER BY name ASC;
+    `;
+
+    res.json({
+      success: true,
+      data: categories,
+      message: 'Categories fetched successfully',
+    });
+  } catch (err) {
+    console.error('❌ Error fetching categories:', err);
+    res.status(500).json({ success: false, message: 'Internal server error fetching categories' });
+  }
+};
   
   
   // =============================
@@ -1974,56 +1979,104 @@ exports.getCategories = async (req, res) => {
   };
   
 
+
   exports.getProducersByCategory = async (req, res) => {
     try {
       const { categoryId } = req.params;
+      const { sort_by = 'name_asc', user_lat, user_lng, limit = 10, offset = 0 } = req.query;
+      const limitNum = parseInt(limit);
+      const offsetNum = parseInt(offset);
   
-      if (!categoryId) {
-        return res.status(400).json({ message: 'categoryId is required' });
+      // Validate category exists
+      const [category] = await sql`SELECT id FROM categories WHERE id = ${categoryId}`;
+      if (!category) return res.status(404).json({ success: false, message: 'Category not found' });
+  
+      // Validate location for distance sorting
+      let distanceSort = sort_by === 'distance_asc';
+      if (distanceSort && (!user_lat || !user_lng)) {
+        return res.status(400).json({ success: false, message: 'user_lat and user_lng required for distance sorting' });
       }
   
-      // Fetch distinct producers who have products in this category
-      const result = await sql`
-        SELECT 
-          p.id AS producer_id,
-          p.name AS producer_name,
-          p.location,
-          COUNT(prod.id) AS total_products,
-          MIN(prod.image_url) AS preview_image
+      let query = sql`
+        SELECT DISTINCT 
+          p.id, p.name, p.location, p.phone, p.logo_url, p.latitude, p.longitude,
+          CASE WHEN ${distanceSort} THEN 
+            (6371 * acos(cos(radians(${parseFloat(user_lat)})) * cos(radians(p.latitude)) * cos(radians(p.longitude - ${parseFloat(user_lng)})) + sin(radians(${parseFloat(user_lat)})) * sin(radians(p.latitude))))
+          ELSE NULL END AS distance_km
         FROM producers p
-        JOIN products prod ON prod.producer_id = p.id
-        WHERE prod.category_id = ${categoryId}
-        GROUP BY p.id
-        ORDER BY p.name
+        INNER JOIN products pr ON p.id = pr.producer_id
+        WHERE pr.category_id = ${categoryId} AND pr.available = true
       `;
   
-      res.status(200).json(result);
-    } catch (error) {
-      console.error('Error fetching producers by category:', error);
-      res.status(500).json({ message: 'Failed to fetch producers by category', error: error.message });
+      if (sort_by === 'name_asc') query.append(sql` ORDER BY p.name ASC`);
+      else if (distanceSort) query.append(sql` ORDER BY distance_km ASC`);
+      query.append(sql` LIMIT ${limitNum} OFFSET ${offsetNum}`);
+  
+      const producers = await query;
+      producers.forEach(p => { if (p.distance_km) p.distance_km = parseFloat(p.distance_km.toFixed(2)); });
+  
+      res.json({
+        success: true,
+        data: producers,
+        pagination: { total: producers.length, limit: limitNum, offset: offsetNum },
+        message: 'Producers fetched successfully',
+      });
+    } catch (err) {
+      console.error('❌ Error fetching producers:', err);
+      res.status(500).json({ success: false, message: 'Internal server error fetching producers' });
     }
   };
+
 
   exports.getProductsByProducer = async (req, res) => {
     try {
       const { producerId } = req.params;
+      const { sort_by = 'name_asc', user_lat, user_lng, limit = 10, offset = 0 } = req.query;
+      const limitNum = parseInt(limit);
+      const offsetNum = parseInt(offset);
   
-      if (!producerId) {
-        return res.status(400).json({ message: 'producerId is required' });
-      }
+      // Validate producer exists
+      const [producer] = await sql`SELECT id FROM producers WHERE id = ${producerId}`;
+      if (!producer) return res.status(404).json({ success: false, message: 'Producer not found' });
   
-      const products = await sql`
-        SELECT * FROM products WHERE producer_id = ${producerId}
+      let query = sql`
+        SELECT 
+          pr.id, pr.name, pr.description, pr.price, pr.stock_quantity, pr.image_url, pr.weight_kg,
+          pl.transport_cost,
+          CASE WHEN ${sort_by === 'distance_asc' && user_lat && user_lng} THEN 
+            (6371 * acos(cos(radians(${parseFloat(user_lat)})) * cos(radians(p.latitude)) * cos(radians(p.longitude - ${parseFloat(user_lng)})) + sin(radians(${parseFloat(user_lat)})) * sin(radians(p.latitude))))
+          ELSE NULL END AS distance_km
+        FROM products pr
+        LEFT JOIN product_locations pl ON pr.id = pl.product_id
+        LEFT JOIN producers p ON pr.producer_id = p.id
+        WHERE pr.producer_id = ${producerId} AND pr.available = true
       `;
   
-      res.status(200).json(products);
-    } catch (error) {
-      console.error('Error fetching products by producer:', error);
-      res.status(500).json({ message: 'Failed to fetch products by producer' });
+      if (sort_by === 'price_asc') query.append(sql` ORDER BY pr.price ASC`);
+      else if (sort_by === 'price_desc') query.append(sql` ORDER BY pr.price DESC`);
+      else if (sort_by === 'distance_asc' && user_lat && user_lng) query.append(sql` ORDER BY distance_km ASC`);
+      else query.append(sql` ORDER BY pr.name ASC`);
+      query.append(sql` LIMIT ${limitNum} OFFSET ${offsetNum}`);
+  
+      const products = await query;
+      products.forEach(p => {
+        p.price = parseFloat(p.price);
+        p.transport_cost = parseFloat(p.transport_cost || 0);
+        p.total_estimated_cost = p.price + p.transport_cost;  // For planning
+        if (p.distance_km) p.distance_km = parseFloat(p.distance_km.toFixed(2));
+      });
+  
+      res.json({
+        success: true,
+        data: products,
+        pagination: { total: products.length, limit: limitNum, offset: offsetNum },
+        message: 'Products fetched successfully',
+      });
+    } catch (err) {
+      console.error('❌ Error fetching products:', err);
+      res.status(500).json({ success: false, message: 'Internal server error fetching products' });
     }
   };
-  
-
  
   const crypto = require('crypto');
   const flutterwave = require('../utils/flutterwave');
