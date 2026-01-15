@@ -56,6 +56,7 @@ app.use("/api/couriers", courierRoutes);
 app.use("/api/delivery", deliveryRoutes);
 app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
+app.use('/api/categories', require('./routes/categoryRouter'));
 
 // ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {
