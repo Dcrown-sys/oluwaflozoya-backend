@@ -133,8 +133,7 @@ router.post('/promo/redeem', adminController.redeemPromoCode);
 // Categories
 // ============================
 
-router.get('/:categoryId/producers', adminController.getProducersByCategory); 
-router.get('/:producerId/products', adminController.getProductsByProducer);  // Note: This might need a separate producers router if not here // GET /api/categories/:categoryId/producers
+ // Note: This might need a separate producers router if not here // GET /api/categories/:categoryId/producers
 
 
 // ============================
