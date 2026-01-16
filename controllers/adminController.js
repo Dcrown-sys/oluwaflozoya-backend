@@ -2116,6 +2116,25 @@ exports.getCategories = async (req, res) => {
     }
   };
 
+
+  exports.getAllProducts = async (req, res) => {
+    try {
+      const products = await sql`
+        SELECT 
+          pr.id, pr.name, pr.description, pr.price, pr.stock_quantity, pr.image_url, pr.weight_kg,
+          p.id AS producer_id, p.name AS producer_name, p.location, p.latitude, p.longitude
+        FROM products pr
+        INNER JOIN producers p ON pr.producer_id = p.id
+        WHERE pr.available = true
+        ORDER BY pr.name ASC
+      `;
+      res.json({ success: true, data: products, message: 'All products fetched successfully' });
+    } catch (err) {
+      console.error('❌ Error fetching all products:', err);
+      res.status(500).json({ success: false, message: 'Internal server error fetching products' });
+    }
+  };
+
   const crypto = require('crypto');
   const flutterwave = require('../utils/flutterwave');
   
