@@ -1561,7 +1561,7 @@ if (!category || category.length === 0) {
   };
   
   exports.calculateTransport = async (req, res) => {
-    const { originLat, originLng, destLat, destLng, weightKg = 1, baseCost = 0 } = req.body;
+    const { originLat, originLng, destLat, destLng, weightKg = 1, baseCost = 0, productId } = req.body;  // Added productId for context
     try {
       // Validate inputs
       if (!originLat || !originLng || !destLat || !destLng) {
@@ -1587,7 +1587,7 @@ if (!category || category.length === 0) {
   
       const distanceKm = element.distance.value / 1000;
   
-      // Transport methods (unchanged)
+      // Transport methods (can be adjusted for realism)
       const methods = [
         { name: 'Motorcycle', capacity: 5, ratePerKm: 2, loadFactor: 0.5 },
         { name: 'Cab', capacity: 50, ratePerKm: 5, loadFactor: 1 },
@@ -1607,6 +1607,7 @@ if (!category || category.length === 0) {
       const totalCost = distanceCost + loadCost + baseCost;
   
       res.json({
+        productId,  // Include for linking
         distanceKm,
         method: selectedMethod.name,
         estimatedCost: totalCost,
@@ -1617,7 +1618,6 @@ if (!category || category.length === 0) {
       res.status(500).json({ error: 'Failed to calculate transport' });
     }
   };
-  
   // ✅ Get all locations (for dropdowns in frontend)
 exports.getAllLocations = async (req, res) => {
   try {
@@ -2036,44 +2036,43 @@ exports.getCategories = async (req, res) => {
   exports.getProductsByProducer = async (req, res) => {
     try {
       const { producerId } = req.params;
-      const { sort_by = 'name_asc', user_lat, user_lng, limit = 10, offset = 0 } = req.query;
+      const { sort_by = 'name_asc', limit = 10, offset = 0 } = req.query;
       const limitNum = parseInt(limit);
       const offsetNum = parseInt(offset);
   
-      // Validate producer exists
-      const [producer] = await sql`SELECT id FROM producers WHERE id = ${producerId}`;
+      // Validate producer exists and get details
+      const [producer] = await sql`
+        SELECT id, name, location, latitude, longitude FROM producers WHERE id = ${producerId}
+      `;
       if (!producer) return res.status(404).json({ success: false, message: 'Producer not found' });
   
-      let query = sql`
+      // Build ORDER BY dynamically (safe for postgres.js)
+      let orderBy = 'pr.name ASC';  // Default
+      if (sort_by === 'price_desc') orderBy = 'pr.price DESC';
+      // Add more if needed
+  
+      // Execute query with conditional elements (no append needed)
+      const products = await sql`
         SELECT 
           pr.id, pr.name, pr.description, pr.price, pr.stock_quantity, pr.image_url, pr.weight_kg,
-          pl.transport_cost,
-          CASE WHEN ${sort_by === 'distance_asc' && user_lat && user_lng} THEN 
-            (6371 * acos(cos(radians(${parseFloat(user_lat)})) * cos(radians(p.latitude)) * cos(radians(p.longitude - ${parseFloat(user_lng)})) + sin(radians(${parseFloat(user_lat)})) * sin(radians(p.latitude))))
-          ELSE NULL END AS distance_km
+          pl.transport_cost
         FROM products pr
         LEFT JOIN product_locations pl ON pr.id = pl.product_id
-        LEFT JOIN producers p ON pr.producer_id = p.id
         WHERE pr.producer_id = ${producerId} AND pr.available = true
+        ORDER BY ${sql.unsafe(orderBy)}
+        LIMIT ${limitNum} OFFSET ${offsetNum}
       `;
   
-      if (sort_by === 'price_asc') query.append(sql` ORDER BY pr.price ASC`);
-      else if (sort_by === 'price_desc') query.append(sql` ORDER BY pr.price DESC`);
-      else if (sort_by === 'distance_asc' && user_lat && user_lng) query.append(sql` ORDER BY distance_km ASC`);
-      else query.append(sql` ORDER BY pr.name ASC`);
-      query.append(sql` LIMIT ${limitNum} OFFSET ${offsetNum}`);
-  
-      const products = await query;
+      // Format data
       products.forEach(p => {
         p.price = parseFloat(p.price);
         p.transport_cost = parseFloat(p.transport_cost || 0);
         p.total_estimated_cost = p.price + p.transport_cost;  // For planning
-        if (p.distance_km) p.distance_km = parseFloat(p.distance_km.toFixed(2));
       });
   
       res.json({
         success: true,
-        data: products,
+        data: { producer: producer, products: products },
         pagination: { total: products.length, limit: limitNum, offset: offsetNum },
         message: 'Products fetched successfully',
       });
@@ -2082,7 +2081,41 @@ exports.getCategories = async (req, res) => {
       res.status(500).json({ success: false, message: 'Internal server error fetching products' });
     }
   };
- 
+
+
+  exports.searchProducts = async (req, res) => {
+    try {
+      const { search, limit = 10, offset = 0 } = req.query;
+      const limitNum = parseInt(limit);
+      const offsetNum = parseInt(offset);
+  
+      if (!search || search.trim().length < 2) {
+        return res.json({ success: true, data: [], message: 'Search query too short' });
+      }
+  
+      // Search products by name (case-insensitive), include producer details
+      const products = await sql`
+        SELECT 
+          pr.id, pr.name, pr.description, pr.price, pr.stock_quantity, pr.image_url, pr.weight_kg,
+          p.id AS producer_id, p.name AS producer_name, p.location
+        FROM products pr
+        INNER JOIN producers p ON pr.producer_id = p.id
+        WHERE pr.available = true AND LOWER(pr.name) LIKE LOWER(${`%${search}%`})
+        ORDER BY pr.name ASC
+        LIMIT ${limitNum} OFFSET ${offsetNum}
+      `;
+  
+      res.json({
+        success: true,
+        data: products,
+        message: 'Products searched successfully',
+      });
+    } catch (err) {
+      console.error('❌ Error searching products:', err);
+      res.status(500).json({ success: false, message: 'Internal server error searching products' });
+    }
+  };
+
   const crypto = require('crypto');
   const flutterwave = require('../utils/flutterwave');
   
