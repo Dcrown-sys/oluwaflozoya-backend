@@ -3493,6 +3493,57 @@ exports.searchProducts = async (req, res) => {
     }
   };
 
+  exports.getProductById = async (req, res) => {
+    try {
+      const { id } = req.params;
+  
+      if (!id) {
+        return res.status(400).json({ message: "Product ID is required" });
+      }
+  
+      // Fetch product by ID, joining with producers for additional data
+      const products = await sql`
+        SELECT 
+          p.id, 
+          p.name, 
+          p.description, 
+          p.price, 
+          p.image_url,
+          p.stock_quantity,
+          pr.id AS producer_id,
+          pr.name AS producer_name
+        FROM products p
+        JOIN producers pr ON pr.id = p.producer_id
+        WHERE p.id = ${id}
+        LIMIT 1;
+      `;
+  
+      if (products.length === 0) {
+        return res.status(404).json({ success: false, message: "Product not found" });
+      }
+  
+      const product = products[0]; // Since LIMIT 1, take the first (and only) result
+  
+      res.json({
+        success: true,
+        data: {
+          id: product.id,
+          name: product.name,
+          price: product.price,
+          image_url: product.image_url,
+          stock_quantity: product.stock_quantity,
+          description: product.description,
+          producer_id: product.producer_id,
+          producer_name: product.producer_name,
+          // Add more fields if needed
+        },
+      });
+    } catch (err) {
+      console.error("❌ getProductById error:", err);
+      res.status(500).json({ message: "Server error" });
+    }
+  };
+
 
   // ✅ Confirm payment and update order status after Flutterwave callback
 // exports.confirmPayment = async (req, res) => {
