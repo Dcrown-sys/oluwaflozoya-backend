@@ -116,6 +116,7 @@ router.get('/payment-success', (req, res) => {
 router.post('/orders', adminController.createOrder);
 router.get('/orders/user/:user_id', adminController.getOrdersByUser);
 router.get('/orders/:id', adminController.getOrderById);
+router.post('/products/toggle-featured', adminController.toggleFeatured);
 // routes/admin.js
 
 

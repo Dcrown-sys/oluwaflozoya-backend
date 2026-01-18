@@ -3360,6 +3360,28 @@ exports.getAds = async (req, res) => {
     }
   };
   
+// Toggle featured status for a single product
+exports.toggleFeatured = async (req, res) => {
+  try {
+    const { productId, featured } = req.body;
+
+    if (!productId) {
+      return res.status(400).json({ error: "productId is required" });
+    }
+
+    await sql`
+      UPDATE products
+      SET featured = ${featured}
+      WHERE id = ${productId}
+    `;
+
+    res.json({ message: "Product featured status updated successfully" });
+  } catch (err) {
+    console.error("Error toggling featured:", err);
+    res.status(500).json({ error: "Failed to toggle featured status" });
+  }
+};
+
   // Remove featured products
   exports.removeFeaturedProducts = async (req, res) => {
     try {
