@@ -3359,6 +3359,39 @@ exports.getAds = async (req, res) => {
       res.status(500).json({ error: "Failed to set featured products" });
     }
   };
+
+  exports.deleteProducer = async (req, res) => {
+    try {
+      const { id } = req.params; // Producer ID from URL params (e.g., /api/admin/producers/:id)
+  
+      if (!id) {
+        return res.status(400).json({ error: "Producer ID is required" });
+      }
+  
+      // First, delete all products associated with this producer (to handle foreign key constraints)
+      await sql`
+        DELETE FROM products
+        WHERE producer_id = ${id}
+      `;
+  
+      // Then, delete the producer
+      const result = await sql`
+        DELETE FROM producers
+        WHERE id = ${id}
+        RETURNING id
+      `;
+  
+      if (result.length === 0) {
+        return res.status(404).json({ error: "Producer not found" });
+      }
+  
+      res.json({ message: "Producer and associated products deleted successfully" });
+    } catch (err) {
+      console.error("Error deleting producer:", err);
+      res.status(500).json({ error: "Failed to delete producer" });
+    }
+  };
+  
   
 // Toggle featured status for a single product
 exports.toggleFeatured = async (req, res) => {
