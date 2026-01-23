@@ -3438,22 +3438,38 @@ exports.toggleFeatured = async (req, res) => {
   
 
 
-  // ✅ Get Best Sellers
-exports.getBestSellers = async (req, res) => {
+  exports.getBestSellers = async (req, res) => {
     try {
-      const bestSellers = await sql`
+      // Parse query params (defaults: limit=10, no period for all-time)
+      const limit = Math.min(parseInt(req.query.limit) || 10, 100); // Cap at 100 for safety
+      const period = req.query.period ? parseInt(req.query.period) : null; // Days (e.g., 30); null for all-time
+  
+      // Build query conditionally
+      let query = `
         SELECT 
           p.id, 
           p.name, 
           p.image_url, 
           p.price,
-          COUNT(oi.id) as order_count
+          COUNT(oi.id) as order_count,
+          COALESCE(SUM(oi.quantity), 0) as total_quantity_sold,
+          COALESCE(SUM(oi.quantity * p.price), 0) as total_revenue
         FROM order_items oi
         JOIN products p ON oi.product_id = p.id
-        GROUP BY p.id
-        ORDER BY order_count DESC
-        LIMIT 10;
       `;
+  
+      if (period && period > 0) {
+        query += ` WHERE oi.created_at > NOW() - INTERVAL '${period} days'`;
+      }
+  
+      query += `
+        GROUP BY p.id
+        ORDER BY total_quantity_sold DESC  -- Change to: order_count DESC for "most ordered", or total_revenue DESC for revenue
+        LIMIT ${limit}
+      `;
+  
+      // Use sql.unsafe for dynamic query (ensure no user input in query string to avoid injection)
+      const bestSellers = await sql.unsafe(query);
   
       res.json({ success: true, data: bestSellers });
     } catch (err) {
