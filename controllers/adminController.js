@@ -2121,7 +2121,7 @@ exports.getCategories = async (req, res) => {
     try {
       const products = await sql`
         SELECT 
-          pr.id, pr.name, pr.description, pr.price, pr.stock_quantity, pr.image_url, pr.weight_kg,
+          pr.id, pr.name, pr.description, pr.price, pr.stock_quantity, pr.image_url, pr.weight_kg, pr.unit,
           p.id AS producer_id, p.name AS producer_name, p.location, p.latitude, p.longitude
         FROM products pr
         INNER JOIN producers p ON pr.producer_id = p.id
@@ -2134,7 +2134,7 @@ exports.getCategories = async (req, res) => {
       res.status(500).json({ success: false, message: 'Internal server error fetching products' });
     }
   };
-
+  
   const crypto = require('crypto');
   const flutterwave = require('../utils/flutterwave');
   
