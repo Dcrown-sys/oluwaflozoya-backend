@@ -2134,7 +2134,7 @@ exports.getCategories = async (req, res) => {
       res.status(500).json({ success: false, message: 'Internal server error fetching products' });
     }
   };
-  
+
   const crypto = require('crypto');
   const flutterwave = require('../utils/flutterwave');
   
@@ -2213,25 +2213,30 @@ exports.getCategories = async (req, res) => {
             RETURNING id
           `;
   
-          let subtotal = 0;
-          for (const item of items) {
-            const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
-            if (!product) throw new Error(`Product not found: ${item.product_id}`);
-  
-            const itemTotal = Number(product.price) * Number(item.quantity);
-            subtotal += itemTotal;
-  
-            await tx`
-              INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
-              VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
-            `;
-          }
-  
-          const vat = subtotal * 0.03;
-          const serviceFee = subtotal * 0.03;
-          totalAmount = subtotal + vat + serviceFee;
-  
-          await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.id}`;
+          // Inside the 'order' block, replace the calculation part:
+let subtotal = 0;
+const uniqueProducts = new Set();  // Track unique products for app fee
+
+for (const item of items) {
+  const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
+  if (!product) throw new Error(`Product not found: ${item.product_id}`);
+
+  const itemTotal = Number(product.price) * Number(item.quantity);
+  subtotal += itemTotal;
+  uniqueProducts.add(item.product_id);  // Add to set for uniqueness
+
+  await tx`
+    INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
+    VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
+  `;
+}
+
+// Match frontend: VAT 7.5%, App Fee ₦1000 per unique product
+const vat = Math.round(subtotal * 0.075);  // Round to match frontend
+const appFee = Math.round(uniqueProducts.size * 1000);  // ₦1000 per unique; change to 3000 if needed
+totalAmount = Math.round(subtotal + vat + appFee);  // Round total
+
+await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.id}`;
   
           return { id: newOrder.id };
         });
