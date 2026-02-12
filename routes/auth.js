@@ -123,4 +123,53 @@ router.post('/firebase-login', async (req, res) => {
   }
 });
 
+// POST /auth/login-with-apple
+router.post('/login-with-apple', async (req, res) => {
+  try {
+    const { firebaseUid, email } = req.body;
+
+    if (!firebaseUid || !email) {
+      return res.status(400).json({ error: 'Firebase UID and email are required' });
+    }
+
+    // Check if user exists by Firebase UID or email
+    const existingUsers = await sql`
+      SELECT * FROM users WHERE firebase_uid = ${firebaseUid} OR email = ${email}
+    `;
+
+    if (existingUsers.length === 0) {
+      // User doesn't exist, return error to prompt signup
+      return res.status(404).json({ error: 'User not found. Please sign up first.' });
+    }
+
+    const user = existingUsers[0];
+    console.log('👤 Existing user found:', user);
+
+    // Generate backend JWT token
+    const token = jwt.sign(
+      {
+        id: user.id,
+        firebase_uid: user.firebase_uid,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.status(200).json({
+      success: true,
+      user,
+      token,
+    });
+  } catch (error) {
+    console.error('❌ Apple login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal Server Error',
+      details: error.message || error,
+    });
+  }
+});
+
+
 module.exports = router;
