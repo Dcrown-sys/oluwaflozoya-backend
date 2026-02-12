@@ -2408,7 +2408,7 @@ exports.getCategories = async (req, res) => {
   };
   
   
-  // ============================
+ // ============================
 // ✅ 2. Verify Payment (Manual)
 // ============================
 exports.verifyPayment = async (req, res) => {
@@ -2463,10 +2463,10 @@ exports.verifyPayment = async (req, res) => {
           VALUES (
             ${payment.user_id}, 
             'paid', 
-            ${payment.delivery_address || ''},  -- Add defaults to avoid undefined
-            ${payment.phone || ''}, 
-            ${payment.name || ''}, 
-            ${payment.email || ''}, 
+            COALESCE(${payment.delivery_address}, ''),  -- Use COALESCE to handle null
+            COALESCE(${payment.phone}, ''), 
+            COALESCE(${payment.name}, ''), 
+            COALESCE(${payment.email}, ''), 
             ${tx_ref}, 
             ${payment.amount}
           )
