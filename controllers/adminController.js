@@ -758,23 +758,19 @@ exports.cancelOrder = async (req, res) => {
       return res.status(400).json({ error: 'tx_ref is required' });
     }
 
-    // Delete the order from the orders table
-    const result = await sql`
-      DELETE FROM orders WHERE payment_reference = ${tx_ref}
+    // Update payment status to cancelled (no order to delete)
+    await sql`
+      UPDATE payments
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE tx_ref = ${tx_ref}
     `;
 
-    if (result.count > 0) {
-      res.json({ success: true, message: 'Order cancelled successfully' });
-    } else {
-      res.status(404).json({ error: 'Order not found' });
-    }
+    res.json({ success: true, message: 'Payment cancelled' });
   } catch (error) {
     console.error('Cancel order error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 };
-
-
 
 
 
@@ -2223,53 +2219,34 @@ exports.getCategories = async (req, res) => {
       }
   
       let totalAmount = 0;
-      let order;
   
       // -----------------------
-      // Handle ORDER payments
+      // Calculate total for ORDER payments (but don't create order yet)
       // -----------------------
       if (payment_type === 'order') {
         if (!items?.length) return res.status(400).json({ error: 'Items are required for order payment' });
         if (!delivery_address) return res.status(400).json({ error: 'Delivery address required' });
   
-        order = await sql.begin(async (tx) => {
-          const [newOrder] = await tx`
-            INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email)
-            VALUES (${user_id}, 'pending', ${delivery_address}, ${phone}, ${name}, ${email})
-            RETURNING id
-          `;
+        // Calculate total (same logic as before)
+        let subtotal = 0;
+        const uniqueProducts = new Set();
   
-          // Inside the 'order' block, replace the calculation part:
-let subtotal = 0;
-const uniqueProducts = new Set();  // Track unique products for app fee
-
-for (const item of items) {
-  const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
-  if (!product) throw new Error(`Product not found: ${item.product_id}`);
-
-  const itemTotal = Number(product.price) * Number(item.quantity);
-  subtotal += itemTotal;
-  uniqueProducts.add(item.product_id);  // Add to set for uniqueness
-
-  await tx`
-    INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
-    VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
-  `;
-}
-
-// Match frontend: VAT 7.5%, App Fee ₦1000 per unique product
-const vat = Math.round(subtotal * 0.075);  // Round to match frontend
-const appFee = Math.round(uniqueProducts.size * 1000);  // ₦1000 per unique; change to 3000 if needed
-totalAmount = Math.round(subtotal + vat + appFee);  // Round total
-
-await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.id}`;
+        for (const item of items) {
+          const [product] = await sql`SELECT price FROM products WHERE id = ${item.product_id}`;
+          if (!product) throw new Error(`Product not found: ${item.product_id}`);
   
-          return { id: newOrder.id };
-        });
+          const itemTotal = Number(product.price) * Number(item.quantity);
+          subtotal += itemTotal;
+          uniqueProducts.add(item.product_id);
+        }
+  
+        const vat = Math.round(subtotal * 0.075);
+        const appFee = Math.round(uniqueProducts.size * 1000);
+        totalAmount = Math.round(subtotal + vat + appFee);
       }
   
       // -----------------------
-      // Handle DELIVERY payments
+      // Handle DELIVERY payments (same as before, but no order creation)
       // -----------------------
       else if (payment_type === 'delivery') {
         if (!order_id) return res.status(400).json({ error: 'order_id required for delivery payment' });
@@ -2277,7 +2254,6 @@ await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.i
         const [existingOrder] = await sql`SELECT delivery_fee FROM orders WHERE id = ${order_id}`;
         if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
   
-        order = { id: order_id };
         totalAmount = Number(existingOrder.delivery_fee);
       }
   
@@ -2287,7 +2263,7 @@ await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.i
       const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
   
       // -----------------------
-      // Flutterwave Payment Link
+      // Flutterwave Payment Link (same as before)
       // -----------------------
       const payload = {
         tx_ref,
@@ -2303,8 +2279,8 @@ await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.i
           title: payment_type === 'order' ? 'Zoya Order Payment' : 'Zoya Delivery Payment',
           description:
             payment_type === 'order'
-              ? `Payment for order ${order.id} (VAT + Service Fee included)`
-              : `Delivery fee for order ${order.id}`,
+              ? `Payment for order (VAT + Service Fee included)`
+              : `Delivery fee for order ${order_id}`,
         },
       };
   
@@ -2326,29 +2302,24 @@ await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.i
       }
   
       // -----------------------
-      // Save payment record
+      // Save payment record (with items for order creation later)
       // -----------------------
+      const paymentId = uuidv4();
       await sql`
-        INSERT INTO payments (id, order_id, user_id, amount, status, payment_reference, payment_type, created_at)
-        VALUES (${uuidv4()}, ${order.id}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, NOW())
+        INSERT INTO payments (id, order_id, user_id, amount, status, tx_ref, payment_type, items, created_at)
+        VALUES (${paymentId}, ${order_id || null}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, ${JSON.stringify(items || [])}, NOW())
       `;
   
       // -----------------------
-      // Send notification via exports.createNotification
+      // Do NOT send "Order Placed" notification yet (wait for verification)
       // -----------------------
-      await exports.createNotification({
-        userId: user_id,
-        title: 'Order Placed Successfully',
-        body: `Your order #${order.id} has been placed. Total: ₦${totalAmount.toFixed(2)}. You'll receive updates soon.`,
-        data: { order_id: order.id },
-      });
   
       // -----------------------
       // Response
       // -----------------------
       return res.status(200).json({
         success: true,
-        order_id: order.id,
+        payment_id: paymentId,
         payment_type,
         payment_url: fwRes.data.data.link,
         tx_ref,
@@ -2431,64 +2402,81 @@ await tx`UPDATE orders SET total_amount = ${totalAmount} WHERE id = ${newOrder.i
       const { tx_ref } = req.query;
       if (!tx_ref) return res.status(400).json({ message: 'tx_ref is required' });
   
-      // 1️⃣ Find payment in DB
-      const [payment] = await sql`SELECT * FROM payments WHERE payment_reference = ${tx_ref}`;
+      console.log('🔍 Verifying payment for tx_ref:', tx_ref);
+  
+      // 1️⃣ Find payment
+      const [payment] = await sql`SELECT * FROM payments WHERE tx_ref = ${tx_ref}`;
       if (!payment) return res.status(404).json({ message: 'Payment not found' });
   
-      // 2️⃣ Skip if already completed
       if (payment.status === 'completed') {
-        return res.status(200).json({ message: 'Payment already verified', payment });
+        return res.status(200).json({ success: true, message: 'Payment already verified', payment });
       }
   
-      // 3️⃣ Verify with Flutterwave
+      // 2️⃣ Verify with Flutterwave
       const response = await axios.get(
         `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`,
-        { headers: { Authorization: `Bearer ${process.env.FLW_SECRET_KEY}` } }
+        { headers: { Authorization: `Bearer ${FLW_SECRET_KEY}` } }
       );
   
       const paymentData = response.data?.data;
       if (!paymentData) throw new Error('Invalid verification response');
   
-      // 4️⃣ Map Flutterwave status to our DB status
+      console.log('🔄 Flutterwave status:', paymentData.status);
+  
+      // 3️⃣ Map status
       const fwStatus = (paymentData.status || '').toLowerCase();
       let newStatus = 'pending';
       if (['successful', 'completed'].includes(fwStatus)) newStatus = 'completed';
       else if (['failed', 'cancelled'].includes(fwStatus)) newStatus = 'cancelled';
       else if (fwStatus === 'pending') newStatus = 'pending';
+      else newStatus = 'cancelled';  // Default to cancelled
   
-      // 5️⃣ Update payment status
+      // 4️⃣ Update payment status
       await sql`
         UPDATE payments
         SET status = ${newStatus}, updated_at = NOW()
-        WHERE payment_reference = ${tx_ref}
+        WHERE tx_ref = ${tx_ref}
       `;
   
-      // 6️⃣ Update order based on payment type
-      if (payment.order_id) {
-        let orderStatus = 'pending';
-        if (payment.payment_type === 'order') {
-          if (newStatus === 'completed') orderStatus = 'paid';
-          else if (newStatus === 'cancelled') orderStatus = 'cancelled';
-        } else if (payment.payment_type === 'delivery') {
-          if (newStatus === 'completed') orderStatus = 'delivery_paid';
-          else if (newStatus === 'cancelled') orderStatus = 'delivery_pending';
-        }
+      // 5️⃣ Create order only if completed
+      if (newStatus === 'completed' && payment.payment_type === 'order') {
+        const items = payment.items;  // From stored JSON
+        if (!items?.length) throw new Error('No items found for order creation');
   
-        await sql`
-          UPDATE orders
-          SET status = ${orderStatus}, updated_at = NOW()
-          WHERE id = ${payment.order_id}
-        `;
+        await sql.begin(async (tx) => {
+          const [newOrder] = await tx`
+            INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
+            VALUES (${payment.user_id}, 'paid', ${req.body.delivery_address || ''}, ${req.body.phone || ''}, ${req.body.name || ''}, ${req.body.email || ''}, ${tx_ref}, ${payment.amount})
+            RETURNING id
+          `;
+  
+          for (const item of items) {
+            const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
+            if (!product) throw new Error(`Product not found: ${item.product_id}`);
+  
+            const itemTotal = Number(product.price) * Number(item.quantity);
+            await tx`
+              INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
+              VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
+            `;
+          }
+  
+          // Send notification now
+          await exports.createNotification({
+            userId: payment.user_id,
+            title: 'Order Placed Successfully',
+            body: `Your order #${newOrder.id} has been placed. Total: ₦${payment.amount}. You'll receive updates soon.`,
+            data: { order_id: newOrder.id },
+          });
+        });
       }
   
       return res.status(200).json({ success: true, status: newStatus, payment });
-  
     } catch (err) {
       console.error('❌ verifyPayment error:', err.response?.data || err.message);
       return res.status(500).json({ message: 'Failed to verify payment' });
     }
   };
-  
   
   // ============================
   // 🏦 3. Create Virtual Account
