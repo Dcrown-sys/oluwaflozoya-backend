@@ -760,7 +760,7 @@ exports.cancelOrder = async (req, res) => {
 
     // Delete the order from the orders table
     const result = await sql`
-      DELETE FROM orders WHERE tx_ref = ${tx_ref}
+      DELETE FROM orders WHERE payment_reference = ${tx_ref}
     `;
 
     if (result.count > 0) {
