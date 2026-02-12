@@ -2305,11 +2305,11 @@ exports.getCategories = async (req, res) => {
       // Save payment record (with items for order creation later)
       // -----------------------
       const paymentId = uuidv4();
-      await sql`
-        INSERT INTO payments (id, order_id, user_id, amount, status, tx_ref, payment_type, items, created_at)
-        VALUES (${paymentId}, ${order_id || null}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, ${JSON.stringify(items || [])}, NOW())
-      `;
-  
+    await sql`
+      INSERT INTO payments (id, order_id, user_id, amount, status, tx_ref, payment_type, items, delivery_address, phone, name, email, created_at)
+      VALUES (${paymentId}, ${order_id || null}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, ${JSON.stringify(items || [])}, ${delivery_address}, ${phone}, ${name}, ${email}, NOW())
+    `;
+
       // -----------------------
       // Do NOT send "Order Placed" notification yet (wait for verification)
       // -----------------------
@@ -2429,7 +2429,7 @@ exports.getCategories = async (req, res) => {
       if (['successful', 'completed'].includes(fwStatus)) newStatus = 'completed';
       else if (['failed', 'cancelled'].includes(fwStatus)) newStatus = 'cancelled';
       else if (fwStatus === 'pending') newStatus = 'pending';
-      else newStatus = 'cancelled';  // Default to cancelled
+      else newStatus = 'cancelled';
   
       // 4️⃣ Update payment status
       await sql`
@@ -2440,13 +2440,13 @@ exports.getCategories = async (req, res) => {
   
       // 5️⃣ Create order only if completed
       if (newStatus === 'completed' && payment.payment_type === 'order') {
-        const items = payment.items;  // From stored JSON
+        const items = payment.items;
         if (!items?.length) throw new Error('No items found for order creation');
   
         await sql.begin(async (tx) => {
           const [newOrder] = await tx`
             INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
-            VALUES (${payment.user_id}, 'paid', ${req.body.delivery_address || ''}, ${req.body.phone || ''}, ${req.body.name || ''}, ${req.body.email || ''}, ${tx_ref}, ${payment.amount})
+            VALUES (${payment.user_id}, 'paid', ${payment.delivery_address}, ${payment.phone}, ${payment.name}, ${payment.email}, ${tx_ref}, ${payment.amount})
             RETURNING id
           `;
   
@@ -2461,7 +2461,7 @@ exports.getCategories = async (req, res) => {
             `;
           }
   
-          // Send notification now
+          // Send notification
           await exports.createNotification({
             userId: payment.user_id,
             title: 'Order Placed Successfully',
@@ -2477,7 +2477,6 @@ exports.getCategories = async (req, res) => {
       return res.status(500).json({ message: 'Failed to verify payment' });
     }
   };
-  
   // ============================
   // 🏦 3. Create Virtual Account
   // ============================
