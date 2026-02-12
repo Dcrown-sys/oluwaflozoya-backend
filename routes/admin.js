@@ -118,6 +118,7 @@ router.post('/orders', adminController.createOrder);
 router.get('/orders/user/:user_id', adminController.getOrdersByUser);
 router.get('/orders/:id', adminController.getOrderById);
 router.post('/products/toggle-featured', adminController.toggleFeatured);
+router.post('/buyer/cancel-order', adminController.cancelOrder);
 // routes/admin.js
 
 

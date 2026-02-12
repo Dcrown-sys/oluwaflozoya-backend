@@ -750,6 +750,32 @@ exports.getOrderById = async (req, res) => {
   }
 };
 
+exports.cancelOrder = async (req, res) => {
+  try {
+    const { tx_ref } = req.body;
+
+    if (!tx_ref) {
+      return res.status(400).json({ error: 'tx_ref is required' });
+    }
+
+    // Delete the order from the orders table
+    const result = await sql`
+      DELETE FROM orders WHERE tx_ref = ${tx_ref}
+    `;
+
+    if (result.count > 0) {
+      res.json({ success: true, message: 'Order cancelled successfully' });
+    } else {
+      res.status(404).json({ error: 'Order not found' });
+    }
+  } catch (error) {
+    console.error('Cancel order error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+
+
 
 
   
