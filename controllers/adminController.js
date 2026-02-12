@@ -2263,7 +2263,7 @@ exports.getCategories = async (req, res) => {
       const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
   
       // -----------------------
-      // Flutterwave Payment Link (same as before)
+      // Flutterwave Payment Link
       // -----------------------
       const payload = {
         tx_ref,
@@ -2302,14 +2302,28 @@ exports.getCategories = async (req, res) => {
       }
   
       // -----------------------
-      // Save payment record (with items for order creation later)
+      // Save payment record (with items for order creation later) - ADD DEFAULTS TO AVOID UNDEFINED
       // -----------------------
       const paymentId = uuidv4();
-    await sql`
-      INSERT INTO payments (id, order_id, user_id, amount, status, tx_ref, payment_type, items, delivery_address, phone, name, email, created_at)
-      VALUES (${paymentId}, ${order_id || null}, ${user_id}, ${totalAmount}, 'pending', ${tx_ref}, ${payment_type}, ${JSON.stringify(items || [])}, ${delivery_address}, ${phone}, ${name}, ${email}, NOW())
-    `;
-
+      await sql`
+        INSERT INTO payments (id, order_id, user_id, amount, status, tx_ref, payment_type, items, delivery_address, phone, name, email, created_at)
+        VALUES (
+          ${paymentId}, 
+          ${order_id || null}, 
+          ${user_id}, 
+          ${totalAmount}, 
+          'pending', 
+          ${tx_ref}, 
+          ${payment_type}, 
+          ${JSON.stringify(items || [])}, 
+          ${delivery_address || ''},  -- Default to empty string if undefined
+          ${phone || ''}, 
+          ${name || ''}, 
+          ${email || ''}, 
+          NOW()
+        )
+      `;
+  
       // -----------------------
       // Do NOT send "Order Placed" notification yet (wait for verification)
       // -----------------------
@@ -2395,88 +2409,97 @@ exports.getCategories = async (req, res) => {
   
   
   // ============================
-  // ✅ 2. Verify Payment (Manual)
-  // ============================
-  exports.verifyPayment = async (req, res) => {
-    try {
-      const { tx_ref } = req.query;
-      if (!tx_ref) return res.status(400).json({ message: 'tx_ref is required' });
-  
-      console.log('🔍 Verifying payment for tx_ref:', tx_ref);
-  
-      // 1️⃣ Find payment
-      const [payment] = await sql`SELECT * FROM payments WHERE tx_ref = ${tx_ref}`;
-      if (!payment) return res.status(404).json({ message: 'Payment not found' });
-  
-      if (payment.status === 'completed') {
-        return res.status(200).json({ success: true, message: 'Payment already verified', payment });
-      }
-  
-      // 2️⃣ Verify with Flutterwave
-      const response = await axios.get(
-        `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`,
-        { headers: { Authorization: `Bearer ${FLW_SECRET_KEY}` } }
-      );
-  
-      const paymentData = response.data?.data;
-      if (!paymentData) throw new Error('Invalid verification response');
-  
-      console.log('🔄 Flutterwave status:', paymentData.status);
-  
-      // 3️⃣ Map status
-      const fwStatus = (paymentData.status || '').toLowerCase();
-      let newStatus = 'pending';
-      if (['successful', 'completed'].includes(fwStatus)) newStatus = 'completed';
-      else if (['failed', 'cancelled'].includes(fwStatus)) newStatus = 'cancelled';
-      else if (fwStatus === 'pending') newStatus = 'pending';
-      else newStatus = 'cancelled';
-  
-      // 4️⃣ Update payment status
-      await sql`
-        UPDATE payments
-        SET status = ${newStatus}, updated_at = NOW()
-        WHERE tx_ref = ${tx_ref}
-      `;
-  
-      // 5️⃣ Create order only if completed
-      if (newStatus === 'completed' && payment.payment_type === 'order') {
-        const items = payment.items;
-        if (!items?.length) throw new Error('No items found for order creation');
-  
-        await sql.begin(async (tx) => {
-          const [newOrder] = await tx`
-            INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
-            VALUES (${payment.user_id}, 'paid', ${payment.delivery_address}, ${payment.phone}, ${payment.name}, ${payment.email}, ${tx_ref}, ${payment.amount})
-            RETURNING id
-          `;
-  
-          for (const item of items) {
-            const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
-            if (!product) throw new Error(`Product not found: ${item.product_id}`);
-  
-            const itemTotal = Number(product.price) * Number(item.quantity);
-            await tx`
-              INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
-              VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
-            `;
-          }
-  
-          // Send notification
-          await exports.createNotification({
-            userId: payment.user_id,
-            title: 'Order Placed Successfully',
-            body: `Your order #${newOrder.id} has been placed. Total: ₦${payment.amount}. You'll receive updates soon.`,
-            data: { order_id: newOrder.id },
-          });
-        });
-      }
-  
-      return res.status(200).json({ success: true, status: newStatus, payment });
-    } catch (err) {
-      console.error('❌ verifyPayment error:', err.response?.data || err.message);
-      return res.status(500).json({ message: 'Failed to verify payment' });
+// ✅ 2. Verify Payment (Manual)
+// ============================
+exports.verifyPayment = async (req, res) => {
+  try {
+    const { tx_ref } = req.query;
+    if (!tx_ref) return res.status(400).json({ message: 'tx_ref is required' });
+
+    console.log('🔍 Verifying payment for tx_ref:', tx_ref);
+
+    // 1️⃣ Find payment
+    const [payment] = await sql`SELECT * FROM payments WHERE tx_ref = ${tx_ref}`;
+    if (!payment) return res.status(404).json({ message: 'Payment not found' });
+
+    if (payment.status === 'completed') {
+      return res.status(200).json({ success: true, message: 'Payment already verified', payment });
     }
-  };
+
+    // 2️⃣ Verify with Flutterwave
+    const response = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`,
+      { headers: { Authorization: `Bearer ${FLW_SECRET_KEY}` } }
+    );
+
+    const paymentData = response.data?.data;
+    if (!paymentData) throw new Error('Invalid verification response');
+
+    console.log('🔄 Flutterwave status:', paymentData.status);
+
+    // 3️⃣ Map status
+    const fwStatus = (paymentData.status || '').toLowerCase();
+    let newStatus = 'pending';
+    if (['successful', 'completed'].includes(fwStatus)) newStatus = 'completed';
+    else if (['failed', 'cancelled'].includes(fwStatus)) newStatus = 'cancelled';
+    else if (fwStatus === 'pending') newStatus = 'pending';
+    else newStatus = 'cancelled';
+
+    // 4️⃣ Update payment status
+    await sql`
+      UPDATE payments
+      SET status = ${newStatus}, updated_at = NOW()
+      WHERE tx_ref = ${tx_ref}
+    `;
+
+    // 5️⃣ Create order only if completed
+    if (newStatus === 'completed' && payment.payment_type === 'order') {
+      const items = payment.items;
+      if (!items?.length) throw new Error('No items found for order creation');
+
+      await sql.begin(async (tx) => {
+        const [newOrder] = await tx`
+          INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
+          VALUES (
+            ${payment.user_id}, 
+            'paid', 
+            ${payment.delivery_address || ''},  -- Add defaults to avoid undefined
+            ${payment.phone || ''}, 
+            ${payment.name || ''}, 
+            ${payment.email || ''}, 
+            ${tx_ref}, 
+            ${payment.amount}
+          )
+          RETURNING id
+        `;
+
+        for (const item of items) {
+          const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
+          if (!product) throw new Error(`Product not found: ${item.product_id}`);
+
+          const itemTotal = Number(product.price) * Number(item.quantity);
+          await tx`
+            INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
+            VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
+          `;
+        }
+
+        // Send notification
+        await exports.createNotification({
+          userId: payment.user_id,
+          title: 'Order Placed Successfully',
+          body: `Your order #${newOrder.id} has been placed. Total: ₦${payment.amount}. You'll receive updates soon.`,
+          data: { order_id: newOrder.id },
+        });
+      });
+    }
+
+    return res.status(200).json({ success: true, status: newStatus, payment });
+  } catch (err) {
+    console.error('❌ verifyPayment error:', err.response?.data || err.message);
+    return res.status(500).json({ message: 'Failed to verify payment' });
+  }
+};
   // ============================
   // 🏦 3. Create Virtual Account
   // ============================
