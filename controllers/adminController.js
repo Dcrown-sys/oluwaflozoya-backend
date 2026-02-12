@@ -2411,6 +2411,9 @@ exports.getCategories = async (req, res) => {
  // ============================
 // ✅ 2. Verify Payment (Manual)
 // ============================
+// ============================
+// ✅ 2. Verify Payment (Manual)
+// ============================
 exports.verifyPayment = async (req, res) => {
   try {
     const { tx_ref } = req.query;
@@ -2421,6 +2424,8 @@ exports.verifyPayment = async (req, res) => {
     // 1️⃣ Find payment
     const [payment] = await sql`SELECT * FROM payments WHERE tx_ref = ${tx_ref}`;
     if (!payment) return res.status(404).json({ message: 'Payment not found' });
+
+    console.log('📋 Full payment record:', payment);  // Log the entire payment object
 
     if (payment.status === 'completed') {
       return res.status(200).json({ success: true, message: 'Payment already verified', payment });
@@ -2453,46 +2458,57 @@ exports.verifyPayment = async (req, res) => {
     `;
 
     // 5️⃣ Create order only if completed
-    if (newStatus === 'completed' && payment.payment_type === 'order') {
-      const items = payment.items;
-      if (!items?.length) throw new Error('No items found for order creation');
+// 5️⃣ Create order only if completed
+if (newStatus === 'completed' && payment.payment_type === 'order') {
+  const items = payment.items;
+  if (!items?.length) throw new Error('No items found for order creation');
 
-      await sql.begin(async (tx) => {
-        const [newOrder] = await tx`
-          INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
-          VALUES (
-            ${payment.user_id}, 
-            'paid', 
-            COALESCE(${payment.delivery_address}, ''),  -- Use COALESCE to handle null
-            COALESCE(${payment.phone}, ''), 
-            COALESCE(${payment.name}, ''), 
-            COALESCE(${payment.email}, ''), 
-            ${tx_ref}, 
-            ${payment.amount}
-          )
-          RETURNING id
-        `;
+  // Set safe defaults to handle undefined/null
+  const safeFields = {
+    delivery_address: payment.delivery_address ?? '',
+    phone: payment.phone ?? '',
+    name: payment.name ?? '',
+    email: payment.email ?? '',
+  };
 
-        for (const item of items) {
-          const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
-          if (!product) throw new Error(`Product not found: ${item.product_id}`);
+  console.log('📝 Safe fields for insert:', safeFields);  // Add this log to confirm
 
-          const itemTotal = Number(product.price) * Number(item.quantity);
-          await tx`
-            INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
-            VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
-          `;
-        }
+  await sql.begin(async (tx) => {
+    const [newOrder] = await tx`
+      INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
+      VALUES (
+        ${payment.user_id}, 
+        'paid', 
+        ${safeFields.delivery_address}, 
+        ${safeFields.phone}, 
+        ${safeFields.name}, 
+        ${safeFields.email}, 
+        ${tx_ref}, 
+        ${payment.amount}
+      )
+      RETURNING id
+    `;
 
-        // Send notification
-        await exports.createNotification({
-          userId: payment.user_id,
-          title: 'Order Placed Successfully',
-          body: `Your order #${newOrder.id} has been placed. Total: ₦${payment.amount}. You'll receive updates soon.`,
-          data: { order_id: newOrder.id },
-        });
-      });
+    for (const item of items) {
+      const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
+      if (!product) throw new Error(`Product not found: ${item.product_id}`);
+
+      const itemTotal = Number(product.price) * Number(item.quantity);
+      await tx`
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
+        VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
+      `;
     }
+
+    // Send notification
+    await exports.createNotification({
+      userId: payment.user_id,
+      title: 'Order Placed Successfully',
+      body: `Your order #${newOrder.id} has been placed. Total: ₦${payment.amount}. You'll receive updates soon.`,
+      data: { order_id: newOrder.id },
+    });
+  });
+}
 
     return res.status(200).json({ success: true, status: newStatus, payment });
   } catch (err) {
