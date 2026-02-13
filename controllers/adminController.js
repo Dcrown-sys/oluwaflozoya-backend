@@ -2460,8 +2460,11 @@ exports.verifyPayment = async (req, res) => {
     // 5️⃣ Create order only if completed
 // 5️⃣ Create order only if completed
 if (newStatus === 'completed' && payment.payment_type === 'order') {
-  const items = payment.items;
+  // Parse items from JSON string to array
+  const items = JSON.parse(payment.items || '[]');
   if (!items?.length) throw new Error('No items found for order creation');
+
+  console.log('📦 Parsed items:', items);  // Log to confirm parsing
 
   // Set safe defaults to handle undefined/null
   const safeFields = {
@@ -2504,6 +2507,7 @@ if (newStatus === 'completed' && payment.payment_type === 'order') {
     `;
 
     for (const item of items) {
+      console.log('🔍 Processing item:', item);  // Log each item
       const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
       if (!product) throw new Error(`Product not found: ${item.product_id}`);
 
