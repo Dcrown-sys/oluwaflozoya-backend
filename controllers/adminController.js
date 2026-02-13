@@ -2471,7 +2471,21 @@ if (newStatus === 'completed' && payment.payment_type === 'order') {
     email: payment.email ?? '',
   };
 
-  console.log('📝 Safe fields for insert:', safeFields);  // Add this log to confirm
+  // Ensure amount is a number
+  const amountNumber = Number(payment.amount) || 0;
+
+  // Log all VALUES for debugging
+  const valuesArray = [
+    payment.user_id,
+    'paid',
+    safeFields.delivery_address,
+    safeFields.phone,
+    safeFields.name,
+    safeFields.email,
+    tx_ref,
+    amountNumber
+  ];
+  console.log('📝 Full VALUES array for orders INSERT:', valuesArray);
 
   await sql.begin(async (tx) => {
     const [newOrder] = await tx`
@@ -2484,7 +2498,7 @@ if (newStatus === 'completed' && payment.payment_type === 'order') {
         ${safeFields.name}, 
         ${safeFields.email}, 
         ${tx_ref}, 
-        ${payment.amount}
+        ${amountNumber}
       )
       RETURNING id
     `;
@@ -2504,7 +2518,7 @@ if (newStatus === 'completed' && payment.payment_type === 'order') {
     await exports.createNotification({
       userId: payment.user_id,
       title: 'Order Placed Successfully',
-      body: `Your order #${newOrder.id} has been placed. Total: ₦${payment.amount}. You'll receive updates soon.`,
+      body: `Your order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
       data: { order_id: newOrder.id },
     });
   });
