@@ -180,8 +180,8 @@ router.post(
 
         for (const item of items) {
           const [product] = await sql`
-            SELECT id, price FROM products WHERE id = ${item.product_id}
-          `;
+          SELECT id, price, name FROM products WHERE id = ${item.product_id}
+        `;
           if (!product) {
             console.error('❌ Product not found during order creation:', item.product_id);
             continue;
@@ -233,23 +233,27 @@ router.post(
           if (!product) continue;
 
           await sql`
-            INSERT INTO order_items (
-              id,
-              order_id,
-              product_id,
-              quantity,
-              unit_price,
-              created_at
-            )
-            VALUES (
-              ${uuidv4()},
-              ${orderId},
-              ${item.product_id},
-              ${item.quantity},
-              ${product.price},
-              NOW()
-            )
-          `;
+  INSERT INTO order_items (
+    id,
+    order_id,
+    product_id,
+    quantity,
+    unit_price,
+    total_price,
+    product_name,
+    created_at
+  )
+  VALUES (
+    ${uuidv4()},
+    ${orderId},
+    ${item.product_id},
+    ${item.quantity},
+    ${product.price},
+    ${Number(product.price) * Number(item.quantity)},
+    ${product.name},
+    NOW()
+  )
+`;
         }
         console.log('🧾 Order items created');
 
