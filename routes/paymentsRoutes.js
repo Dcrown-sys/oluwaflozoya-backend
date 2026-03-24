@@ -180,7 +180,7 @@ router.post(
 
         for (const item of items) {
           const [product] = await sql`
-            SELECT id, price, vendor_id FROM products WHERE id = ${item.product_id}
+            SELECT id, price FROM products WHERE id = ${item.product_id}
           `;
           if (!product) {
             console.error('❌ Product not found during order creation:', item.product_id);
@@ -239,7 +239,6 @@ router.post(
               product_id,
               quantity,
               unit_price,
-              vendor_id,
               created_at
             )
             VALUES (
@@ -248,7 +247,6 @@ router.post(
               ${item.product_id},
               ${item.quantity},
               ${product.price},
-              ${product.vendor_id},
               NOW()
             )
           `;
