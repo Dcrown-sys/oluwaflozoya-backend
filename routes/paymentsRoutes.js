@@ -19,9 +19,8 @@ router.post(
     try {
       console.log('🌀 Flutterwave webhook received');
 
-      // Signature verification
       const signature = (req.headers['verif-hash'] || req.headers['verif_hash'] || '').trim();
-      if (signature !== FLW_WEBHOOK_SECRET) {
+      if (signature !== process.env.FLW_WEBHOOK_SECRET?.trim()) {
         return res.status(401).send('Invalid signature');
       }
 
@@ -35,78 +34,68 @@ router.post(
 
       const txRef = data.tx_ref;
       const flwRef = data.id || data.flw_ref;
-      console.log('🔑 txRef:', txRef);
 
-      // 1️⃣ Update payment status (ALWAYS SAFE)
+      // Update payment
       const [updatedPayment] = await sql`
         UPDATE payments 
         SET status = 'completed', flw_ref = ${flwRef}, updated_at = NOW()
         WHERE tx_ref = ${txRef}
-        RETURNING id, user_id, payment_type, tx_ref, items, delivery_address;
+        RETURNING id, user_id, payment_type, tx_ref, items, delivery_address, phone, name, email, amount;
       `;
 
-      if (!updatedPayment) {
-        console.warn('⚠️ Payment not found');
-        return res.status(200).send('OK');
-      }
+      console.log('✅ Payment:', updatedPayment.id);
 
-      console.log('✅ Payment completed:', updatedPayment.id);
+      let orderId = updatedPayment.order_id;
 
-      // 2️⃣ Extract potential order_id (SAFE - no DB write yet)
-      let orderId = null;
-      if (txRef?.startsWith('order-')) {
+      // 🔍 Extract UUID if missing
+      if (!orderId && txRef?.startsWith('order-')) {
         const uuidMatch = txRef.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
-        if (uuidMatch) {
-          orderId = uuidMatch[0];
-          console.log('🔍 Potential order_id:', orderId);
-        }
+        if (uuidMatch) orderId = uuidMatch[0];
       }
 
-      // 3️⃣ CHECK ORDER EXISTS BEFORE ANY FK UPDATE (CRITICAL)
-      if (orderId) {
-        const [orderCheck] = await sql`SELECT id FROM orders WHERE id = ${orderId} LIMIT 1`;
+      // 🚀 CREATE ORDER IF MISSING (Your old flow!)
+      if (!orderId) {
+        orderId = crypto.randomUUID();
         
-        if (orderCheck) {
-          // ✅ Order exists - SAFE to link
-          await sql`
-            UPDATE payments 
-            SET order_id = ${orderId} 
-            WHERE id = ${updatedPayment.id};
-          `;
-          
-          await sql`
-            UPDATE orders 
-            SET 
-              payment_reference = ${txRef},
-              status = 'paid',
-              updated_at = NOW()
-            WHERE id = ${orderId};
-          `;
-          
-          console.log('✅ ✅ Order linked:', orderId);
-        } else {
-          console.warn('⚠️ Order missing:', orderId, '- Payment standalone');
-        }
+        await sql`
+          INSERT INTO orders (
+            id, user_id, status, total_amount, payment_reference,
+            delivery_address, phone_number, name, email, created_at
+          ) VALUES (
+            ${orderId}, ${updatedPayment.user_id}, 'paid', ${updatedPayment.amount}, ${txRef},
+            ${updatedPayment.delivery_address}, ${updatedPayment.phone}, ${updatedPayment.name}, ${updatedPayment.email}, NOW()
+          );
+        `;
+        
+        console.log('✅ NEW ORDER created:', orderId);
+      } else {
+        // Update existing order
+        await sql`
+          UPDATE orders 
+          SET payment_reference = ${txRef}, status = 'paid', updated_at = NOW()
+          WHERE id = ${orderId};
+        `;
+        console.log('✅ Existing order updated:', orderId);
       }
 
-      // 4️⃣ Delivery (only if order exists)
-      if (updatedPayment.payment_type === 'delivery_fee' && orderId) {
-        const [orderCheck] = await sql`SELECT id FROM orders WHERE id = ${orderId}`;
-        if (orderCheck) {
-          await sql`
-            UPDATE deliveries 
-            SET status = 'en_route', updated_at = NOW()
-            WHERE order_id = ${orderId} AND status = 'pending';
-          `;
-          finalizeDeliveryAfterPaymentAuto(orderId).catch(console.error);
-        }
+      // Link payment to order
+      await sql`
+        UPDATE payments SET order_id = ${orderId} WHERE id = ${updatedPayment.id};
+      `;
+
+      // Delivery
+      if (updatedPayment.payment_type === 'delivery_fee') {
+        await sql`
+          UPDATE deliveries SET status = 'en_route' WHERE order_id = ${orderId};
+        `;
+        finalizeDeliveryAfterPaymentAuto(orderId).catch(console.error);
       }
 
-      console.log('✅ WEBHOOK SUCCESS');
+      console.log('✅ PERFECT - Order & Payment linked!');
       return res.status(200).send('OK');
 
     } catch (err) {
-      console.error('💥 Webhook error:', err.message);
+      console.error('💥 Error:', err);
       return res.status(500).send('Error');
     }
   }
