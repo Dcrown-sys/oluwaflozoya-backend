@@ -1,4 +1,4 @@
-// routes/paymentRoutes.js
+// routes/paymentRoutes.js - BULLETPROOF VERSION
 const express = require('express');
 const router = express.Router();
 const { sql } = require('../db');
@@ -12,9 +12,6 @@ const { verifyBuyer } = require('../middleware/auth');
 router.post('/order/:orderId', verifyBuyer, payOrderDelivery);
 router.post('/confirm-payment', confirmPayment);
 
-// ========================
-// 🟢 PERFECT FLUTTERWAVE WEBHOOK
-// ========================
 router.post(
   '/flutterwave-webhook',
   express.raw({ type: 'application/json' }),
@@ -22,16 +19,14 @@ router.post(
     try {
       console.log('🌀 Flutterwave webhook received');
 
-      // ✅ Signature: Simple string comparison
+      // Signature verification
       const signature = (req.headers['verif-hash'] || req.headers['verif_hash'] || '').trim();
       if (signature !== FLW_WEBHOOK_SECRET) {
-        console.warn('❌ Invalid signature');
         return res.status(401).send('Invalid signature');
       }
 
       console.log('✅ Signature verified');
 
-      // Parse payload
       const body = JSON.parse(req.body.toString('utf8'));
       const data = body.data;
       if (!data || data.status !== 'successful') {
@@ -42,84 +37,76 @@ router.post(
       const flwRef = data.id || data.flw_ref;
       console.log('🔑 txRef:', txRef);
 
-      // Update payment status
+      // 1️⃣ Update payment status (ALWAYS SAFE)
       const [updatedPayment] = await sql`
         UPDATE payments 
-        SET 
-          status = 'completed',
-          flw_ref = ${flwRef},
-          updated_at = NOW()
+        SET status = 'completed', flw_ref = ${flwRef}, updated_at = NOW()
         WHERE tx_ref = ${txRef}
-        RETURNING id, order_id, payment_type, tx_ref;
+        RETURNING id, user_id, payment_type, tx_ref, items, delivery_address;
       `;
 
       if (!updatedPayment) {
-        console.warn('⚠️ Payment not found:', txRef);
+        console.warn('⚠️ Payment not found');
         return res.status(200).send('OK');
       }
 
-      console.log('✅ Payment updated:', updatedPayment.id);
+      console.log('✅ Payment completed:', updatedPayment.id);
 
-      // 🔥 UNIVERSAL UUID EXTRACTION (handles ALL tx_ref formats)
-      let orderId = updatedPayment.order_id;
-      if (!orderId && txRef?.includes('-')) {
-        console.log('🔍 Extracting UUID from:', txRef);
-        
-        // Finds UUID anywhere: order-123-19264254-f67b-445c-ba5f-4fea56548a0d
+      // 2️⃣ Extract potential order_id (SAFE - no DB write yet)
+      let orderId = null;
+      if (txRef?.startsWith('order-')) {
         const uuidMatch = txRef.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
-        
         if (uuidMatch) {
           orderId = uuidMatch[0];
-          
+          console.log('🔍 Potential order_id:', orderId);
+        }
+      }
+
+      // 3️⃣ CHECK ORDER EXISTS BEFORE ANY FK UPDATE (CRITICAL)
+      if (orderId) {
+        const [orderCheck] = await sql`SELECT id FROM orders WHERE id = ${orderId} LIMIT 1`;
+        
+        if (orderCheck) {
+          // ✅ Order exists - SAFE to link
           await sql`
             UPDATE payments 
             SET order_id = ${orderId} 
             WHERE id = ${updatedPayment.id};
           `;
-          console.log('🔗 ✅ FIXED order_id:', orderId);
+          
+          await sql`
+            UPDATE orders 
+            SET 
+              payment_reference = ${txRef},
+              status = 'paid',
+              updated_at = NOW()
+            WHERE id = ${orderId};
+          `;
+          
+          console.log('✅ ✅ Order linked:', orderId);
         } else {
-          console.warn('❌ No UUID found in txRef');
+          console.warn('⚠️ Order missing:', orderId, '- Payment standalone');
         }
       }
 
-      // 📦 UPDATE ORDERS TABLE (makes order VISIBLE)
-      if (orderId) {
-        const [order] = await sql`
-          UPDATE orders 
-          SET 
-            payment_reference = ${txRef},
-            status = 'paid',  -- ← KEY: Makes visible in orders query
-            updated_at = NOW()
-          WHERE id = ${orderId}
-          RETURNING id, status, payment_reference;
-        `;
-        
-        console.log('✅ ORDER VISIBLE:', order?.id, order?.payment_reference);
-
-        // Delivery fee specific
-        if (updatedPayment.payment_type === 'delivery_fee') {
+      // 4️⃣ Delivery (only if order exists)
+      if (updatedPayment.payment_type === 'delivery_fee' && orderId) {
+        const [orderCheck] = await sql`SELECT id FROM orders WHERE id = ${orderId}`;
+        if (orderCheck) {
           await sql`
             UPDATE deliveries 
             SET status = 'en_route', updated_at = NOW()
             WHERE order_id = ${orderId} AND status = 'pending';
           `;
-          
-          try {
-            await finalizeDeliveryAfterPaymentAuto(orderId);
-            console.log('🤝 Courier assigned');
-          } catch (err) {
-            console.error('❌ Courier error:', err.message);
-          }
+          finalizeDeliveryAfterPaymentAuto(orderId).catch(console.error);
         }
-      } else {
-        console.error('❌ NO ORDER_ID - Manual fix needed for:', txRef);
       }
 
-      console.log('✅ WEBHOOK COMPLETE');
+      console.log('✅ WEBHOOK SUCCESS');
       return res.status(200).send('OK');
 
     } catch (err) {
-      console.error('💥 Webhook error:', err);
+      console.error('💥 Webhook error:', err.message);
       return res.status(500).send('Error');
     }
   }
