@@ -2260,7 +2260,13 @@ exports.getCategories = async (req, res) => {
       // -----------------------
       // Generate tx_ref
       // -----------------------
-      const tx_ref = `${payment_type}-${Date.now()}-${uuidv4()}`;
+      let tx_ref;
+if (order_id) {
+  tx_ref = `order-${Date.now()}-${order_id}`;  // Real order_id ✅
+} else {
+  const tempOrderId = crypto.randomUUID();
+  tx_ref = `order-${Date.now()}-${tempOrderId}`;
+}
   
       // -----------------------
       // Flutterwave Payment Link
