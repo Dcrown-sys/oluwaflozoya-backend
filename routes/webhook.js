@@ -14,7 +14,7 @@ const rawBodySaver = (req, res, buf, encoding) => {
 // 🟢 Flutterwave webhook route
 router.post(
   '/flutterwave-webhook',
-  express.raw({ type: 'application/json', verify: rawBodySaver }),
+  express.raw({ type: 'application/json' }),
   async (req, res) => {
     try {
       console.log('🌀 Flutterwave webhook received');
@@ -23,7 +23,7 @@ router.post(
       console.log('Headers:', JSON.stringify(req.headers, null, 2));
 
       // 2️⃣ Raw body (should now be a Buffer)
-      const rawBody = req.rawBody;
+      const rawBody = req.body;
       console.log('Raw body type:', rawBody ? rawBody.constructor.name : '');
       console.log('Raw body length:', rawBody ? rawBody.length : 'undefined');
       if (!rawBody) {
@@ -32,23 +32,18 @@ router.post(
       }
 
       // 3️⃣ Verify signature using Flutterwave secret hash (HMAC SHA256 as per docs)
-      const signature = req.headers['verif-hash'] || req.headers['verif_hash'];
-      const secret = process.env.FLW_WEBHOOK_SECRET;  // Your secret hash from Flutterwave dashboard
-
+      const signature = (req.headers['verif-hash'] || req.headers['verif_hash'] || '').trim();
+      const secret = (process.env.FLW_WEBHOOK_SECRET || '').trim();
+      
       if (!secret) {
         console.error('❌ FLW_WEBHOOK_SECRET not set');
         return res.status(500).send('Server configuration error');
       }
-
-      // Compute HMAC SHA256 of raw body
-      const hash = crypto.createHmac('sha256', secret)
-                         .update(rawBody)
-                         .digest('hex');
-
+      
       console.log('Received signature:', signature);
-      console.log('Calculated hash  :', hash);
-
-      if (!signature || signature !== hash) {
+      console.log('Expected signature:', secret);
+      
+      if (!signature || signature !== secret) {
         console.warn('❌ Invalid webhook signature');
         return res.status(401).send('Invalid signature');
       }
