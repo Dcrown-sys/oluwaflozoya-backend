@@ -20,83 +20,151 @@ router.post(
       console.log('🌀 Flutterwave webhook received');
 
       const signature = (req.headers['verif-hash'] || req.headers['verif_hash'] || '').trim();
-      if (signature !== process.env.FLW_WEBHOOK_SECRET?.trim()) {
+      const payload = req.body.toString();
+
+      if (!signature) {
+        console.warn('❌ No signature provided');
+        return res.status(401).send('No signature');
+      }
+
+      if (!FLW_WEBHOOK_SECRET) {
+        console.error('❌ FLW_WEBHOOK_SECRET is missing');
+        return res.status(500).send('Server configuration error');
+      }
+
+      if (signature !== FLW_WEBHOOK_SECRET) {
+        console.warn('❌ Invalid signature', { received: signature });
         return res.status(401).send('Invalid signature');
       }
 
-      console.log('✅ Signature verified');
+      console.log('✅ Webhook signature verified');
 
-      const body = JSON.parse(req.body.toString('utf8'));
-      const data = body.data;
-      if (!data || data.status !== 'successful') {
-        return res.status(200).send('OK');
+      let body;
+      try {
+        body = JSON.parse(payload);
+      } catch (err) {
+        console.error('❌ Invalid JSON payload', err);
+        return res.status(400).send('Invalid JSON');
       }
 
-      const txRef = data.tx_ref;
-      const flwRef = data.id || data.flw_ref;
+      const { event, data } = body;
+      if (!data) {
+        console.warn('⚠️ Missing data in payload');
+        return res.status(400).send('Missing data');
+      }
 
-      // Update payment
-      const [updatedPayment] = await sql`
-        UPDATE payments 
-        SET status = 'completed', flw_ref = ${flwRef}, updated_at = NOW()
+      console.log('💡 Parsed payload:', JSON.stringify(body));
+
+      const txRef = data.tx_ref || null;
+      const flwRef = data.id || null;         // Flutterwave's transaction ID
+      const flutterStatus = (data.status || '').toLowerCase();
+
+      console.log('🔑 Identifiers:', { txRef, flwRef, flutterStatus });
+
+      if (!txRef) {
+        console.warn('⚠️ No tx_ref in payload, cannot process');
+        return res.status(200).send('Ignored - no tx_ref');
+      }
+
+      // ✅ FIX 1: Only look up by tx_ref (not OR flw_ref which can be null)
+      const [payment] = await sql`
+        SELECT * FROM payments
         WHERE tx_ref = ${txRef}
-        RETURNING id, user_id, payment_type, tx_ref, items, delivery_address, phone, name, email, amount;
+        LIMIT 1;
       `;
 
-      console.log('✅ Payment:', updatedPayment.id);
-
-      let orderId = updatedPayment.order_id;
-
-      // 🔍 Extract UUID if missing
-      if (!orderId && txRef?.startsWith('order-')) {
-        const uuidMatch = txRef.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
-        if (uuidMatch) orderId = uuidMatch[0];
+      if (!payment) {
+        console.warn('⚠️ Payment not found for tx_ref:', txRef);
+        return res.status(200).send('Ignored - payment not found');
       }
 
-      // 🚀 CREATE ORDER IF MISSING (Your old flow!)
-      if (!orderId) {
-        orderId = crypto.randomUUID();
-        
-        await sql`
-          INSERT INTO orders (
-            id, user_id, status, total_amount, payment_reference,
-            delivery_address, phone_number, name, email, created_at
-          ) VALUES (
-            ${orderId}, ${updatedPayment.user_id}, 'paid', ${updatedPayment.amount}, ${txRef},
-            ${updatedPayment.delivery_address}, ${updatedPayment.phone}, ${updatedPayment.name}, ${updatedPayment.email}, NOW()
-          );
+      // Idempotency check
+      if (['completed', 'cancelled'].includes(payment.status)) {
+        console.log(`ℹ️ Payment already finalized: ${payment.id}`);
+        return res.status(200).send('Already processed');
+      }
+
+      // Determine new status
+      let newPaymentStatus = 'pending';
+      if (
+        ['charge.completed', 'payment.completed'].includes(event) &&
+        ['successful', 'success', 'completed'].includes(flutterStatus)
+      ) {
+        newPaymentStatus = 'completed';
+      }
+      if (['failed', 'cancelled'].includes(flutterStatus)) {
+        newPaymentStatus = 'cancelled';
+      }
+
+      console.log('💠 Mapped newPaymentStatus:', newPaymentStatus);
+
+      // ✅ FIX 2: Always store flw_ref from data.id
+      await sql`
+        UPDATE payments
+        SET 
+          status = ${newPaymentStatus},
+          flw_ref = ${flwRef},
+          amount = ${data.amount || payment.amount},
+          currency = ${data.currency || payment.currency},
+          updated_at = NOW()
+        WHERE id = ${payment.id};
+      `;
+
+      console.log('✅ Payment record updated');
+
+      // Handle delivery payment completion
+      if (payment.payment_type === 'delivery_fee' && newPaymentStatus === 'completed') {
+        const orderId = payment.order_id;
+
+        if (!orderId) {
+          console.error('❌ No order_id on payment record:', payment.id);
+          return res.status(200).send('OK - but missing order_id');
+        }
+
+        // ✅ FIX 3: Broader status match so delivery update doesn't silently skip
+        const updatedDelivery = await sql`
+          UPDATE deliveries
+          SET status = 'en_route', updated_at = NOW()
+          WHERE order_id = ${orderId}
+            AND status NOT IN ('en_route', 'delivered', 'cancelled')
+          RETURNING id;
         `;
-        
-        console.log('✅ NEW ORDER created:', orderId);
-      } else {
-        // Update existing order
+
+        if (updatedDelivery.length === 0) {
+          console.warn(`⚠️ No eligible delivery found for order ${orderId} — check delivery status`);
+        } else {
+          console.log('🚚 Delivery updated to en_route:', updatedDelivery);
+        }
+
+        // Auto-assign courier
+        try {
+          await finalizeDeliveryAfterPaymentAuto(orderId);
+          console.log('🤝 Courier auto-assigned');
+        } catch (err) {
+          console.error('❌ Courier auto-assignment failed:', err);
+        }
+
+        // Update order status
         await sql`
-          UPDATE orders 
-          SET payment_reference = ${txRef}, status = 'paid', updated_at = NOW()
+          UPDATE orders
+          SET status = 'en_route', updated_at = NOW()
           WHERE id = ${orderId};
         `;
-        console.log('✅ Existing order updated:', orderId);
+        console.log(`📦 Order ${orderId} marked en_route`);
       }
 
-      // Link payment to order
-      await sql`
-        UPDATE payments SET order_id = ${orderId} WHERE id = ${updatedPayment.id};
-      `;
-
-      // Delivery
-      if (updatedPayment.payment_type === 'delivery_fee') {
-        await sql`
-          UPDATE deliveries SET status = 'en_route' WHERE order_id = ${orderId};
-        `;
-        finalizeDeliveryAfterPaymentAuto(orderId).catch(console.error);
+      // Handle order payment (payment_type === 'order')
+      if (payment.payment_type === 'order' && newPaymentStatus === 'completed') {
+        // Add your order creation/confirmation logic here if needed
+        console.log('🛒 Order payment completed for payment:', payment.id);
       }
 
-      console.log('✅ PERFECT - Order & Payment linked!');
+      console.log(`✅ Webhook fully processed for payment ${payment.id}`);
       return res.status(200).send('OK');
 
     } catch (err) {
-      console.error('💥 Error:', err);
-      return res.status(500).send('Error');
+      console.error('💥 Webhook processing error:', err);
+      return res.status(500).send('Server error');
     }
   }
 );
