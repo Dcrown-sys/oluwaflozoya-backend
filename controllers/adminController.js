@@ -9,6 +9,7 @@ const axios = require('axios');
 const { geocodeAddress } = require ('../utils/geocode');
 const { calculateEta } = require('../utils/eta');
 const fetch = require('node-fetch');
+const crypto = require('crypto');
  // Adjust path if your notifications controller is in a different location (e.g., '../controllers/notifications')
 
 
@@ -2208,9 +2209,7 @@ exports.getCategories = async (req, res) => {
         payment_type = 'order',
       } = req.body;
   
-      // -----------------------
       // Validate input
-      // -----------------------
       if (!user_id || !/^[0-9a-fA-F-]{36}$/.test(user_id)) {
         return res.status(400).json({ error: 'Valid user_id is required' });
       }
@@ -2220,14 +2219,11 @@ exports.getCategories = async (req, res) => {
   
       let totalAmount = 0;
   
-      // -----------------------
-      // Calculate total for ORDER payments (but don't create order yet)
-      // -----------------------
+      // Calculate total for ORDER payments
       if (payment_type === 'order') {
         if (!items?.length) return res.status(400).json({ error: 'Items are required for order payment' });
         if (!delivery_address) return res.status(400).json({ error: 'Delivery address required' });
   
-        // Calculate total (same logic as before)
         let subtotal = 0;
         const uniqueProducts = new Set();
   
@@ -2235,8 +2231,7 @@ exports.getCategories = async (req, res) => {
           const [product] = await sql`SELECT price FROM products WHERE id = ${item.product_id}`;
           if (!product) throw new Error(`Product not found: ${item.product_id}`);
   
-          const itemTotal = Number(product.price) * Number(item.quantity);
-          subtotal += itemTotal;
+          subtotal += Number(product.price) * Number(item.quantity);
           uniqueProducts.add(item.product_id);
         }
   
@@ -2245,9 +2240,7 @@ exports.getCategories = async (req, res) => {
         totalAmount = Math.round(subtotal + vat + appFee);
       }
   
-      // -----------------------
-      // Handle DELIVERY payments (same as before, but no order creation)
-      // -----------------------
+      // Handle DELIVERY payments
       else if (payment_type === 'delivery') {
         if (!order_id) return res.status(400).json({ error: 'order_id required for delivery payment' });
   
@@ -2255,22 +2248,23 @@ exports.getCategories = async (req, res) => {
         if (!existingOrder) return res.status(404).json({ error: 'Order not found' });
   
         totalAmount = Number(existingOrder.delivery_fee);
+  
+        // ✅ Bug 3 fix — guard against zero/null delivery fee
+        if (!totalAmount || totalAmount <= 0) {
+          return res.status(400).json({ error: 'Delivery fee is not set for this order' });
+        }
       }
   
-      // -----------------------
       // Generate tx_ref
-      // -----------------------
       let tx_ref;
-if (order_id) {
-  tx_ref = `order-${Date.now()}-${order_id}`;  // Real order_id ✅
-} else {
-  const tempOrderId = crypto.randomUUID();
-  tx_ref = `order-${Date.now()}-${tempOrderId}`;
-}
+      if (order_id) {
+        tx_ref = `order-${Date.now()}-${order_id}`;
+      } else {
+        const tempOrderId = crypto.randomUUID(); // ✅ Bug 2 fix — crypto now imported
+        tx_ref = `order-${Date.now()}-${tempOrderId}`;
+      }
   
-      // -----------------------
       // Flutterwave Payment Link
-      // -----------------------
       const payload = {
         tx_ref,
         amount: Number(totalAmount.toFixed(2)),
@@ -2307,36 +2301,32 @@ if (order_id) {
         });
       }
   
-      // -----------------------
-      // Save payment record (with items for order creation later) - ADD DEFAULTS TO AVOID UNDEFINED
-      // -----------------------
+      // ✅ Bug 4 fix — safe JSON stringify for items
+      const itemsToSave = typeof items === 'string' ? items : JSON.stringify(items || []);
+  
       const paymentId = uuidv4();
       await sql`
-        INSERT INTO payments (id, order_id, user_id, amount, status, tx_ref, payment_type, items, delivery_address, phone, name, email, created_at)
+        INSERT INTO payments (
+          id, order_id, user_id, amount, status, tx_ref,
+          payment_type, items, delivery_address, phone, name, email, created_at
+        )
         VALUES (
-          ${paymentId}, 
-          ${order_id || null}, 
-          ${user_id}, 
-          ${totalAmount}, 
-          'pending', 
-          ${tx_ref}, 
-          ${payment_type}, 
-          ${JSON.stringify(items || [])}, 
-          ${delivery_address || ''},  -- Default to empty string if undefined
-          ${phone || ''}, 
-          ${name || ''}, 
-          ${email || ''}, 
+          ${paymentId},
+          ${order_id || null},
+          ${user_id},
+          ${totalAmount},
+          'pending',
+          ${tx_ref},
+          ${payment_type},
+          ${itemsToSave},
+          ${delivery_address || ''},
+          ${phone || ''},
+          ${name || ''},
+          ${email || ''},
           NOW()
         )
       `;
   
-      // -----------------------
-      // Do NOT send "Order Placed" notification yet (wait for verification)
-      // -----------------------
-  
-      // -----------------------
-      // Response
-      // -----------------------
       return res.status(200).json({
         success: true,
         payment_id: paymentId,
@@ -2345,6 +2335,7 @@ if (order_id) {
         tx_ref,
         total_amount: totalAmount,
       });
+  
     } catch (err) {
       console.error('❌ createPaymentLink error (deep):', {
         message: err.message,
