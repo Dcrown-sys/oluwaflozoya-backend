@@ -89,9 +89,9 @@ router.post(
         console.warn('⚠️ No usable payment identifiers found in webhook');
         return res.status(200).send('Ignored');
       }
-
+      
       let newPaymentStatus = 'pending';
-
+      
       if (
         ['charge.completed', 'payment.completed'].includes(eventType) &&
         ['successful', 'success', 'completed'].includes(flutterStatus)
@@ -100,19 +100,38 @@ router.post(
       } else if (['failed', 'cancelled'].includes(flutterStatus)) {
         newPaymentStatus = 'cancelled';
       }
-
+      
       console.log('💠 Mapped newPaymentStatus:', newPaymentStatus);
-
-      const [payment] = await sql`
-        SELECT *
-        FROM payments
-        WHERE
-          (${txRef} IS NOT NULL AND tx_ref = ${txRef})
-          OR (${paymentReference} IS NOT NULL AND payment_reference = ${paymentReference})
-          OR (${flwRef} IS NOT NULL AND flw_ref = ${flwRef})
-        LIMIT 1;
-      `;
-
+      
+      let payment;
+      
+      if (paymentReference) {
+        [payment] = await sql`
+          SELECT *
+          FROM payments
+          WHERE payment_reference = ${paymentReference}
+          LIMIT 1;
+        `;
+      }
+      
+      if (!payment && txRef) {
+        [payment] = await sql`
+          SELECT *
+          FROM payments
+          WHERE tx_ref = ${txRef}
+          LIMIT 1;
+        `;
+      }
+      
+      if (!payment && flwRef) {
+        [payment] = await sql`
+          SELECT *
+          FROM payments
+          WHERE flw_ref = ${flwRef}
+          LIMIT 1;
+        `;
+      }
+      
       if (!payment) {
         console.warn('⚠️ Payment not found', { txRef, flwRef, paymentReference });
         return res.status(200).send('Ignored');
