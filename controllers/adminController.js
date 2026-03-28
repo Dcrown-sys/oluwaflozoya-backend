@@ -2723,7 +2723,7 @@ exports.getCourierDashboard = async (req, res) => {
       return rows;
     };
 
-    const pendingOrders = await fetchByStatus(["enroute"]);
+    const pendingOrders = await fetchByStatus(["pending", "enroute"]);
     const inProgressOrders = await fetchByStatus(["in_transit"]);
     const completedOrders = await fetchByStatus(["delivered"]);
     const cancelledOrders = await fetchByStatus(["cancelled"]);
