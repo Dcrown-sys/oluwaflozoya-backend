@@ -125,7 +125,7 @@ exports.finalizeDeliveryAfterPayment = async ({ tx_ref, flw_ref, meta }) => {
     if (existingDelivery) {
       await sql`
         UPDATE deliveries
-        SET status = 'en_route', updated_at = NOW()
+        SET status = 'enroute', updated_at = NOW()
         WHERE id = ${existingDelivery.id};
       `;
     } else {
