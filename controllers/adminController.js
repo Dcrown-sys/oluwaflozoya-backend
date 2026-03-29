@@ -2783,10 +2783,12 @@ exports.getCourierDashboard = async (req, res) => {
       if (!delivery) return res.status(404).json({ success: false, message: "Delivery not found" });
   
       // Only allow pickup when buyer has paid (status = 'enroute')
-      if (delivery.status !== "enroute") {
-        return res.status(400).json({ success: false, message: `Cannot pick up delivery with status: ${delivery.status}` });
+      if (!['pending', 'enroute'].includes(delivery.status)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Cannot pick up delivery with status: ${delivery.status}` 
+        });
       }
-  
       // Update deliveries -> in_transit (and set picked_up_at)
       await sql`
         UPDATE deliveries
