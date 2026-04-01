@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: oluwaflozoya-backend
+    env: node
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: OLLAMA_HOST
+        value: http://localhost:11434
+      - key: NODE_ENV
+        value: production
+    autoDeploy: true

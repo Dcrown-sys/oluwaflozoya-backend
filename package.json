@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "ollama-pull": "ollama pull llama3.1:8b && ollama pull gemma3 && ollama pull llava:7b"
   },
   "keywords": [],
   "author": "",
