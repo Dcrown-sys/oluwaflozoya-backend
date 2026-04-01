@@ -1,7 +1,7 @@
 services:
   - type: web
     name: oluwaflozoya-backend
-    env: node
+    env: docker 
     plan: starter
     dockerfilePath: ./Dockerfile
     envVars:
