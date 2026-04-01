@@ -1,12 +1,13 @@
 services:
   - type: web
-    name: oluwaflozoya-backend
-    env: docker 
-    plan: starter
+    name: oluwaflozoya-backend      # EXACT service name
+    env: docker                     # Force Docker
+    region: oregon                  # Your region
+    plan: starter                   # Your plan
     dockerfilePath: ./Dockerfile
     envVars:
-      - key: OLLAMA_HOST
-        value: http://localhost:11434
       - key: NODE_ENV
         value: production
+      - key: OLLAMA_HOST
+        value: http://localhost:11434
     autoDeploy: true
