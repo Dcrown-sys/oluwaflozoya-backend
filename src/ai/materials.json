@@ -1,0 +1,7 @@
+{
+    "materials": {
+      "blocks": {"6_inch": {"lagos": 270, "unit": "blocks"}},
+      "cement": {"dangote": {"lagos": 9200, "unit": "bags"}},
+      "sand": {"sharp": {"lagos": 18000, "unit": "trip"}}
+    }
+  }

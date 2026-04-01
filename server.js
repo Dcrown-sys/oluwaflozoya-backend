@@ -20,6 +20,8 @@ const courierRoutes = require("./routes/courierRoutes");
 const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
+const aiController = require('./src/ai/controller');
+
 // const flutterwaveWebhook = require('./routes/webhook'); // Removed - duplicate/unused
 
 const app = express();
@@ -57,6 +59,15 @@ app.use("/api/delivery", deliveryRoutes);
 app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
+app.use('/api/ai/basic', aiController.basicAI);
+app.use('/api/ai/stream', require('./src/ai/controller').streamAI);
+app.use('/api/ai/think', require('./src/ai/controller').thinkingAI);
+app.use('/api/ai/json', require('./src/ai/controller').structuredAI);
+app.post('/api/ai/vision', require('./src/ai/controller').upload.single('image'), 
+         require('./src/ai/controller').visionAI);
+
+// Serve vision uploads
+app.use('/ai-uploads', express.static('src/ai/uploads'));
 
 // ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {
