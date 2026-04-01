@@ -1,6 +1,6 @@
-FROM node:20-slim  # ✅ Debian (not Alpine) = Ollama compatible
+FROM node:20-slim
 
-# Install Ollama deps
+# Install Ollama dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
@@ -16,7 +16,7 @@ COPY . .
 
 RUN mkdir -p uploads
 
-EXPOSE $PORT
+EXPOSE 10000
 ENV PORT=10000
 
 CMD sh -c "ollama serve & npm start"
