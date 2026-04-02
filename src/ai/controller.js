@@ -6,7 +6,9 @@ const path = require('path');
 const multer = require('multer');
 const cheerio = require('cheerio');
 
-const ollama = new Ollama({ host: process.env.OLLAMA_HOST || 'http://localhost:11434' });
+const ollama = new Ollama({ 
+    host: process.env.OLLAMA_HOST || 'http://ollama:11434' 
+  });
 
 // Load materials SAFELY
 let materials = { materials: {} };
