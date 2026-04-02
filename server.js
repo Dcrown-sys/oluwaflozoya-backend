@@ -164,8 +164,20 @@ app.get('/payment-success', (req, res) => {
   `);
 });
 
+// 🔥 ADD THESE 2 LINES
+const ollama = require('ollama');
+async function preloadGemma() {
+  try {
+    console.log('🔄 Preloading Gemma3...');
+    await ollama.pull('gemma3');
+    console.log('✅ Gemma3 ready!');
+  } catch (e) {
+    console.log('Model will load on first request');
+  }
+}
+
 // ======== START SERVER ========
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;  // Render uses 10000
 
 server.listen(PORT, '0.0.0.0', async () => {
   try {
@@ -174,5 +186,9 @@ server.listen(PORT, '0.0.0.0', async () => {
   } catch (error) {
     console.error('❌ Database connection failed:', error);
   }
+  
+  // 🔥 10s delay = Ollama ready
+  setTimeout(preloadGemma, 10000);
+  
   console.log(`🚀 Server with Socket.IO listening on port ${PORT}`);
 });
