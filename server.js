@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const { sql } = require('./db');
 const path = require('path');
 
+
 // Controllers & routes
 const adminController = require('./controllers/adminController');
 const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
@@ -73,13 +74,19 @@ app.use('/ai-uploads', express.static('src/ai/uploads'));
 // ADD this route (after other routes)
 app.get('/debug/ollama', async (req, res) => {
   try {
-    const models = await ollama.list();
-    res.json({ 
-      models: models.models.map(m => ({name: m.name, size: m.size})), 
-      count: models.models.length 
+    const models = await getModels();
+    res.json({
+      ready: AI_READY,
+      models: models.map(m => ({
+        name: m.name,
+        size: m.size
+      }))
     });
   } catch (err) {
-    res.json({ error: err.message });
+    res.json({
+      ready: false,
+      error: err.message
+    });
   }
 });
 // ======== SOCKET.IO REAL-TIME ========
@@ -177,20 +184,78 @@ app.get('/payment-success', (req, res) => {
   `);
 });
 
-// 🔥 ADD THESE 2 LINES
-const ollama = require('ollama');
-async function preloadGemma() {
-  try {
-    console.log('🔄 Preloading Gemma3...');
-    await ollama.pull('gemma3');
-    console.log('✅ Gemma3 ready!');
-  } catch (e) {
-    console.log('Model will load on first request');
-  }
-}
+
 
 // ======== START SERVER ========
 const PORT = process.env.PORT || 10000;  // Render uses 10000
+
+const axios = require('axios');
+const { exec } = require('child_process');
+
+
+let AI_READY = false;
+
+// 🔁 Wait for Ollama to boot
+async function waitForOllama() {
+  while (true) {
+    try {
+      await axios.get('http://127.0.0.1:11434');
+      console.log('✅ Ollama is ready');
+      break;
+    } catch {
+      console.log('⏳ Waiting for Ollama...');
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+}
+
+// 📦 Pull model using CLI (RELIABLE)
+function pullModel() {
+  return new Promise((resolve, reject) => {
+    console.log('⬇️ Pulling gemma3:latest...');
+    exec('ollama pull gemma3:latest', (err, stdout, stderr) => {
+      if (err) {
+        console.error('❌ Pull failed:', stderr);
+        return reject(err);
+      }
+      console.log(stdout);
+      resolve();
+    });
+  });
+}
+
+// 🔍 Ensure model exists
+async function getModels() {
+  const res = await axios.get('http://127.0.0.1:11434/api/tags');
+  return res.data.models || [];
+}
+
+async function ensureModel() {
+  const models = await getModels();
+
+  console.log('📦 Models found:', models.map(m => m.name));
+
+  const exists = models.some(m => m.name.includes('gemma3'));
+
+  if (!exists) {
+    console.log('⬇️ gemma3 not found, pulling...');
+    await pullModel();
+  } else {
+    console.log('✅ gemma3 already installed');
+  }
+}
+
+// 🚀 Full init
+async function initAI() {
+  try {
+    await waitForOllama();
+    await ensureModel();
+    AI_READY = true;
+    console.log('🔥 AI is fully ready');
+  } catch (err) {
+    console.error('❌ AI init failed:', err.message);
+  }
+}
 
 server.listen(PORT, '0.0.0.0', async () => {
   try {
@@ -201,7 +266,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   }
   
   // 🔥 10s delay = Ollama ready
-  setTimeout(preloadGemma, 10000);
+  initAI();
   
   console.log(`🚀 Server with Socket.IO listening on port ${PORT}`);
 });
