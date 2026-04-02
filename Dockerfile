@@ -17,6 +17,11 @@ COPY . .
 
 RUN mkdir -p uploads
 
+# ✅ PRE-PULL MODELS (faster startup!)
+RUN ollama serve & sleep 15 \
+  && ollama pull llama3.1:8b \
+  && ollama pull gemma3
+
 EXPOSE 10000
 ENV PORT=10000
 
