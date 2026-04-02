@@ -5,9 +5,10 @@ const sharp = require('sharp');
 const path = require('path');
 const multer = require('multer');
 const cheerio = require('cheerio');
+const axios = require('axios');
 
 const ollama = new Ollama({ 
-    host: process.env.OLLAMA_HOST || 'http://localhost:11434',
+    host: 'http://localhost:11434',  // HARDCODE for Render Docker
     timeout: 120000
   });
 

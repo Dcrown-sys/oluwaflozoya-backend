@@ -196,16 +196,14 @@ const { exec } = require('child_process');
 let AI_READY = false;
 
 // 🔁 Wait for Ollama to boot
-async function waitForOllama() {
-  while (true) {
-    try {
-      await axios.get('http://127.0.0.1:11434');
-      console.log('✅ Ollama is ready');
-      break;
-    } catch {
-      console.log('⏳ Waiting for Ollama...');
-      await new Promise(r => setTimeout(r, 2000));
-    }
+async function checkOllama() {
+  try {
+    await axios.get('http://localhost:11434/api/tags', { timeout: 5000 });
+    console.log('✅ Ollama ready');
+    return true;
+  } catch (e) {
+    console.log('⚠️ Ollama warming up...');
+    return false;
   }
 }
 
@@ -266,7 +264,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   }
   
   // 🔥 10s delay = Ollama ready
-  initAI();
+  console.log('🚀 Server ready - AI loads on first request');
   
   console.log(`🚀 Server with Socket.IO listening on port ${PORT}`);
 });
