@@ -4,6 +4,7 @@ const fs = require('fs');
 const sharp = require('sharp');
 const path = require('path');
 const multer = require('multer');
+const cheerio = require('cheerio');
 
 const ollama = new Ollama({ host: process.env.OLLAMA_HOST || 'http://localhost:11434' });
 
@@ -129,91 +130,130 @@ Use ZOYA = SAVE ₦XM on total project!
   }
 };
 
-// 🗄️ DB QUERY (unchanged)
+/// 🗄️ ZOYA LIVE DB (Your original)
 const getZoyaPricesFromDB = async (query) => {
-  try {
-    const material = query.toLowerCase();
-    let result = [];
+    const searchTerms = [
+      query.toLowerCase(),
+      'cement', 'blocks', 'sand', 'gravel', 'steel', 'rod', 
+      'roofing', 'tiles', 'wiring', 'pipes', 'paint', 'timber'
+    ];
     
-    try {
-      result = await sql`
-        SELECT commodity_name, price, unit, updated_at 
-        FROM commodity_prices 
-        WHERE commodity_name ILIKE ${`%${material}%`}
-        ORDER BY updated_at DESC LIMIT 5
-      `;
-    } catch {
-      result = await sql`
-        SELECT 
-          product_id as commodity_name,
-          price,
-          'per unit' as unit,
-          last_updated as updated_at
-        FROM product_prices 
-        WHERE product_id::text ILIKE ${`%${material}%`}
-        ORDER BY last_updated DESC LIMIT 5
-      `;
+    let allPrices = {};
+    
+    for (const term of searchTerms) {
+      try {
+        const result = await sql`
+          SELECT commodity_name, price, unit, updated_at 
+          FROM commodity_prices 
+          WHERE commodity_name ILIKE ${`%${term}%`}
+          ORDER BY updated_at DESC LIMIT 5
+        `;
+        
+        result.forEach(row => {
+          if (row.commodity_name && !allPrices[row.commodity_name.toLowerCase()]) {
+            allPrices[row.commodity_name.toLowerCase()] = {
+              price: Number(row.price),
+              unit: row.unit || 'unit',
+              updated: row.updated_at
+            };
+          }
+        });
+      } catch (e) {}
     }
     
-    const prices = {};
-    result.forEach(row => {
-      if (row.commodity_name) {
-        prices[row.commodity_name.toLowerCase()] = {
-          price: Number(row.price),
-          unit: row.unit || 'unknown',
-          updated: row.updated_at
-        };
+    return allPrices;
+  };
+  // 🌐 LIVE MARKET DATA (Jiji + Google - NO FALLBACKS)
+  const getMarketPrices = async (query) => {
+    try {
+      const material = query.toLowerCase().replace(/ /g, '+');
+      const searchTerms = [
+        `${material}+price+jiji+ng`,
+        `${material}+price+lagos+nigeria`,
+        `${material}+current+price+2024`
+      ];
+  
+      const results = {};
+      
+      // 🔍 JIJI.NG (Primary)
+      for (const term of searchTerms) {
+        try {
+          const { data } = await axios.get(`https://www.jiji.ng/search?query=${term}`, {
+            timeout: 8000,
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            }
+          });
+          
+          const $ = cheerio.load(data);
+          const prices = [];
+          
+          $('[data-testid="price"], .b5mXOf, .c8nI2d, .qaY6re').each((i, el) => {
+            const text = $(el).text();
+            const match = text.match(/₦?([\d,]+\.?[\d]*)/);
+            if (match) {
+              const num = parseFloat(match[1].replace(/,/g, ''));
+              if (num > 0 && num < 10000000) prices.push(num);
+            }
+          });
+  
+          if (prices.length >= 3) {
+            results.jiji = {
+              avg: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
+              min: Math.min(...prices),
+              max: Math.max(...prices),
+              samples: prices.length
+            };
+            break;
+          }
+        } catch (e) {
+          continue;
+        }
       }
-    });
-    
-    return prices;
-  } catch (error) {
-    console.error('DB ERROR:', error);
-    return getFallbackPrices(query.toLowerCase());
-  }
-};
-
-// ✅ FIXED: getMarketPrices = async
-const getMarketPrices = async (query) => {
-  const material = extractMaterial(query.toLowerCase());
-  const marketData = {
-    'sharp sand': {
-      jiji: '₦350k-₦430k (20T)',
-      structurecity: '₦300k-₦400k (20T)', 
-      local: '₦250k-₦350k (Ogba)'
-    },
-    'cement': {
-      jiji: '₦8,500-₦9,200/bag',
-      dangote_direct: '₦8,700/bag',
-      retail: '₦9,000+/bag'
-    },
-    'blocks': {
-      jiji: '₦280-₦350/block',
-      local: '₦300/block',
-      wholesale: '₦260/block'
-    },
-    'longspan': {
-      jiji: '₦48k-₦55k/sheet',
-      market: '₦52k/sheet'
+  
+      // 🔍 GOOGLE SHOPPING (Backup)
+      if (!results.jiji) {
+        try {
+          const { data } = await axios.get(`https://www.google.com/search?q=${material}+price+nigeria&tbm=shop`, {
+            timeout: 8000,
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+          });
+          
+          const $ = cheerio.load(data);
+          const prices = [];
+          
+          $('.a8Pemb.OddQPe, .HRLxBb').each((i, el) => {
+            const text = $(el).text();
+            const match = text.match(/₦?([\d,]+\.?[\d]*)/);
+            if (match) {
+              const num = parseFloat(match[1].replace(/,/g, ''));
+              if (num > 0 && num < 10000000) prices.push(num);
+            }
+          });
+  
+          if (prices.length >= 2) {
+            results.google = {
+              avg: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
+              min: Math.min(...prices),
+              max: Math.max(...prices),
+              samples: prices.length
+            };
+          }
+        } catch (e) {
+          // Silent fail
+        }
+      }
+  
+      return results; // ✅ STRICT: Empty {} if no live data
+      
+    } catch (error) {
+      console.error('LIVE MARKET ERROR:', error.message);
+      return {}; // ✅ NO FALLBACKS
     }
   };
   
-  return marketData[material] || { general: 'Check Jiji.ng for latest' };
-};
-
-const extractMaterial = (query) => {
-  if (query.includes('sand') || query.includes('sharp')) return 'sharp sand';
-  if (query.includes('cement') || query.includes('dangote') || query.includes('bua')) return 'cement';
-  if (query.includes('block')) return 'blocks';
-  if (query.includes('roof') || query.includes('longspan')) return 'longspan';
-  return 'general';
-};
-
-const getFallbackPrices = (material) => ({
-  'sharp sand': { price: 280000, unit: '20T' },
-  'cement': { price: 8200, unit: 'bag' },
-  'blocks': { price: 250, unit: 'block' }
-}[extractMaterial(material)] || { price: 0 });
 
 // 3. Thinking (unchanged)
 const thinkingAI = async (req, res) => {
