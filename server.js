@@ -69,6 +69,19 @@ app.post('/api/ai/vision', require('./src/ai/controller').upload.single('image')
 // Serve vision uploads
 app.use('/ai-uploads', express.static('src/ai/uploads'));
 
+
+// ADD this route (after other routes)
+app.get('/debug/ollama', async (req, res) => {
+  try {
+    const models = await ollama.list();
+    res.json({ 
+      models: models.models.map(m => ({name: m.name, size: m.size})), 
+      count: models.models.length 
+    });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
 // ======== SOCKET.IO REAL-TIME ========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
