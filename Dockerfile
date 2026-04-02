@@ -22,24 +22,4 @@ COPY . .
 EXPOSE 10000
 
 # Start everything properly
-CMD sh -c "
-  echo '🚀 Starting Ollama...'
-  ollama serve &
-
-  echo '⏳ Waiting for Ollama to be ready...'
-  until curl -s http://127.0.0.1:11434 > /dev/null; do
-    sleep 2
-  done
-
-  echo '🧹 Cleaning unused models...'
-  ollama rm gemma2:9b || true
-  ollama rm qwen3:4b || true
-  ollama rm llava:13b || true
-  ollama rm llava:7b || true
-
-  echo '📦 Current models:'
-  ollama list
-
-  echo '🚀 Starting Node server...'
-  npm start
-"
+CMD sh -c "ollama serve & until curl -s http://127.0.0.1:11434 > /dev/null; do sleep 2; done && echo 'Ollama ready' && ollama rm gemma2:9b || true && ollama rm qwen3:4b || true && ollama rm llava:13b || true && ollama rm llava:7b || true && ollama list && npm start"
