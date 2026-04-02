@@ -7,7 +7,6 @@ const { Server } = require('socket.io');
 const { sql } = require('./db');
 const path = require('path');
 
-
 // Controllers & routes
 const adminController = require('./controllers/adminController');
 const adminKYCApprovalController = require('./controllers/adminKYCApprovalController');
@@ -16,38 +15,71 @@ const courierKYCRoutes = require('./routes/courierKYC');
 const adminKYCApprovalRoutes = require('./routes/adminKYCApproval');
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
-const paymentsRoutes = require('./routes/paymentsRoutes'); // Contains the active webhook
+const paymentsRoutes = require('./routes/paymentsRoutes');
 const courierRoutes = require("./routes/courierRoutes");
 const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const aiController = require('./src/ai/controller');
 
-// const flutterwaveWebhook = require('./routes/webhook'); // Removed - duplicate/unused
-
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { 
+    origin: '*', 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true 
+  },
 });
 
 // Pass Socket.IO instance to controllers
 adminKYCApprovalController.setSocket(io);
 adminController.initSocketIO(io);
 
-// ======== MIDDLEWARE ========
+// ======== MIDDLEWARE - FIXED CORS & LIMITS ========
+app.use(cors({
+  origin: true,  // ✅ MOBILE FIX: Allow all origins
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'multipart/form-data']
+}));
 
-// Mount paymentsRoutes (with webhook) BEFORE express.json() to allow raw body capture
-app.use('/api/payment', paymentsRoutes);
+// ✅ Large file/image support for vision AI
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(express.raw({ type: 'application/json', limit: '50mb' }));
 
-// Removed: app.use('/api/flutterwave', flutterwaveWebhook); // Unused/duplicate
-
-// Standard middleware (applied after raw-body routes)
-app.use(cors());
-app.use(express.json());
+// ✅ Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/ai-uploads', express.static('src/ai/uploads'));
 
-// Other routes
+// Request logger
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
+// ======== HEALTH CHECKS - RENDER FIX ========
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    aiReady: AI_READY || false,
+    uptime: process.uptime()
+  });
+});
+
+app.get('/api/ai/vision/health', (req, res) => {
+  res.json({ 
+    status: 'vision-ready', 
+    aiReady: AI_READY || false,
+    endpoint: '/api/ai/vision'
+  });
+});
+
+// ======== ROUTES ========
+app.use('/api/payment', paymentsRoutes); // Webhook first
+
 app.use("/api/geocode", geocodeRoutes);
 app.use('/api/courier', courierKYCRoutes);
 app.use('/api/admin', adminKYCApprovalRoutes);
@@ -60,18 +92,35 @@ app.use("/api/delivery", deliveryRoutes);
 app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
+
+// AI Routes
 app.use('/api/ai/basic', aiController.basicAI);
 app.use('/api/ai/stream', require('./src/ai/controller').streamAI);
 app.use('/api/ai/think', require('./src/ai/controller').thinkingAI);
 app.use('/api/ai/json', require('./src/ai/controller').structuredAI);
-app.post('/api/ai/vision', require('./src/ai/controller').upload.single('image'), 
-         require('./src/ai/controller').visionAI);
 
-// Serve vision uploads
-app.use('/ai-uploads', express.static('src/ai/uploads'));
+// ✅ FIXED VISION ROUTE
+app.post('/api/ai/vision', 
+  require('./src/ai/controller').upload.single('image'), 
+  async (req, res, next) => {
+    try {
+      const result = await require('./src/ai/controller').visionAI(req, res, next);
+      if (!res.headersSent) {
+        res.json(result);
+      }
+    } catch (error) {
+      console.error('❌ Vision AI error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: 'Vision processing failed', 
+          message: error.message 
+        });
+      }
+    }
+  }
+);
 
-
-// ADD this route (after other routes)
+// Debug route (keep if needed)
 app.get('/debug/ollama', async (req, res) => {
   try {
     const models = await getModels();
@@ -89,11 +138,11 @@ app.get('/debug/ollama', async (req, res) => {
     });
   }
 });
-// ======== SOCKET.IO REAL-TIME ========
+
+// ======== SOCKET.IO ========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
 
-  // Courier location updates
   socket.on('locationUpdate', async (data) => {
     try {
       const { courier_id, latitude, longitude } = data;
@@ -112,7 +161,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Send notifications
   socket.on('sendNotification', async (data) => {
     try {
       const { user_id, message, type } = data;
@@ -129,7 +177,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Join room
   socket.on('joinUserRoom', (user_id) => {
     socket.join(`user_${user_id}`);
     console.log(`📌 User ${user_id} joined their room`);
@@ -140,62 +187,30 @@ io.on('connection', (socket) => {
   });
 });
 
-// Removed: Commented-out webhook code in app.js (lines ~100-150) - consolidate to paymentsRoutes
-
-// Webhook test route (if needed, but webhook is in paymentsRoutes)
-// app.use('/api/payment', paymentsRoutes); // Already mounted above
-
-// Health check
+// ======== PAGES ========
 app.get('/', (req, res) => res.send('🚀 Oluwaflo backend is running!'));
 
-// Request logger
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-  next();
-});
-
-// ======== FLUTTERWAVE REDIRECT PAGE ========
 app.get('/payment-success', (req, res) => {
   res.send(`
     <html>
-      <head>
-        <title>Payment Successful</title>
-        <style>
-          body { 
-            font-family: system-ui, sans-serif; 
-            text-align: center; 
-            padding-top: 50px; 
-            background-color: #f9f9f9;
-          }
-          h1 { color: #4CAF50; }
-        </style>
+      <head><title>Payment Successful</title>
+        <style>body{font-family:system-ui,sans-serif;text-align:center;padding-top:50px;background:#f9f9f9;}h1{color:#4CAF50;}</style>
       </head>
       <body>
         <h1>🎉 Payment Successful!</h1>
         <p>Thank you — you can close this tab.</p>
-        <script>
-          // Optional: redirect to your app via deep link
-          setTimeout(() => {
-            window.location.href = "oluwoflomobile://payment-success";
-          }, 1500);
-        </script>
+        <script>setTimeout(() => window.location.href="oluwoflomobile://payment-success",1500);</script>
       </body>
     </html>
   `);
 });
 
-
-
-// ======== START SERVER ========
-const PORT = process.env.PORT || 10000;  // Render uses 10000
-
+// ======== AI INIT (KEEP AS IS) ========
 const axios = require('axios');
 const { exec } = require('child_process');
 
-
 let AI_READY = false;
 
-// 🔁 Wait for Ollama to boot
 async function checkOllama() {
   try {
     await axios.get('http://localhost:11434/api/tags', { timeout: 5000 });
@@ -207,7 +222,6 @@ async function checkOllama() {
   }
 }
 
-// 📦 Pull model using CLI (RELIABLE)
 function pullModel() {
   return new Promise((resolve, reject) => {
     console.log('⬇️ Pulling gemma3:latest...');
@@ -222,7 +236,6 @@ function pullModel() {
   });
 }
 
-// 🔍 Ensure model exists
 async function getModels() {
   const res = await axios.get('http://127.0.0.1:11434/api/tags');
   return res.data.models || [];
@@ -230,11 +243,8 @@ async function getModels() {
 
 async function ensureModel() {
   const models = await getModels();
-
   console.log('📦 Models found:', models.map(m => m.name));
-
   const exists = models.some(m => m.name.includes('gemma3'));
-
   if (!exists) {
     console.log('⬇️ gemma3 not found, pulling...');
     await pullModel();
@@ -243,7 +253,6 @@ async function ensureModel() {
   }
 }
 
-// 🚀 Full init
 async function initAI() {
   try {
     await waitForOllama();
@@ -255,6 +264,9 @@ async function initAI() {
   }
 }
 
+// ======== START SERVER ========
+const PORT = process.env.PORT || 10000;
+
 server.listen(PORT, '0.0.0.0', async () => {
   try {
     const result = await sql`SELECT NOW()`;
@@ -263,8 +275,8 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.error('❌ Database connection failed:', error);
   }
   
-  // 🔥 10s delay = Ollama ready
   console.log('🚀 Server ready - AI loads on first request');
-  
   console.log(`🚀 Server with Socket.IO listening on port ${PORT}`);
+  console.log(`✅ Health: http://localhost:${PORT}/health`);
+  console.log(`✅ Vision Health: http://localhost:${PORT}/api/ai/vision/health`);
 });

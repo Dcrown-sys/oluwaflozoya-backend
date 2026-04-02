@@ -306,90 +306,84 @@ const structuredAI = async (req, res) => {
   }
 };
 
-// ✅ FIXED visionAI - Full CORS + image buffer
-const visionAI = async (req, res) => {
-  // ✅ COMPLETE CORS HEADERS
-  res.set({
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Content-Type': 'text/plain; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    'Connection': 'keep-alive',
-    'Transfer-Encoding': 'chunked'
-  });
-
-  try {
-    const imageFile = req.file;
-    const { message = 'analyze photo', location = 'lagos' } = req.body;
-
-    console.log('🔍 VisionAI: message=', message, 'location=', location, 'hasImage=', !!imageFile);
-
-    const zoyaPrices = await getZoyaPricesFromDB(message);
-    const marketPrices = await getMarketPrices(message); // ✅ Now async
-
-    const zoyaPricesStr = JSON.stringify(zoyaPrices || {}, null, 2);
-    const marketPricesStr = JSON.stringify(marketPrices || {}, null, 2);
-
-    console.log('📊 Prices loaded:', Object.keys(zoyaPrices).length, 'zoya +', Object.keys(marketPrices).length, 'market');
-
-    const stream = await ollama.chat({
-      model: 'gemma3', // ✅ Your model unchanged
-      messages: [
-        {
-          role: 'system',
-          content: `👁️🏗️ ZOYA VISION + LIVE DB PRICES
-
-**ZOYA DB** (${Object.keys(zoyaPrices || {}).length} items):
-${zoyaPricesStr}
-
-**MARKET**:
-${marketPricesStr}
-
-FORMAT:
-**PHOTO**: 2-story duplex
-**MARKET**: ₦80M
-**ZOYA**: ₦45M ✓ SAVE 44%!
-
-BOM:
-Cement: 850×[DB PRICE]=₦7M
-Blocks: 12,500×[DB PRICE]=₦3.1M
-
-📞 ZOYA: +2348063203385`
-        },
-        { 
-          role: 'user', 
-          content: `${String(message || 'analyze photo')} | ${String(location || 'lagos')}\nPHOTO:` 
+// ✅ FIXED visionAI - MOBILE READY
+const visionAI = async (req, res, next) => {
+    try {
+      const imageFile = req.file;
+      const { message = 'analyze photo', location = 'lagos' } = req.body;
+  
+      console.log('🔍 VisionAI:', { 
+        hasImage: !!imageFile, 
+        message, 
+        location, 
+        fileSize: imageFile?.size 
+      });
+  
+      // Get live prices
+      const [zoyaPrices, marketPrices] = await Promise.all([
+        getZoyaPricesFromDB(message),
+        getMarketPrices(message)
+      ]);
+  
+      const stream = await ollama.chat({
+        model: 'gemma3',
+        messages: [
+          {
+            role: 'system',
+            content: `👁️🏗️ ZOYA VISION AI
+  
+  ZOYA DB (${Object.keys(zoyaPrices).length} items): ${JSON.stringify(zoyaPrices, null, 2)}
+  MARKET: ${JSON.stringify(marketPrices, null, 2)}
+  
+  FORMAT:
+  **PHOTO**: 2-story duplex  
+  **VALUE**: ₦80M → ₦45M ✓ 44% SAVINGS!
+  **BOM**: Cement 850×₦7M | Blocks 12,500×₦3.1M
+  
+  📞 +2348063203385`
+          },
+          { role: 'user', content: `${message} | ${location}` }
+        ],
+        images: imageFile?.buffer ? [Buffer.from(imageFile.buffer).toString('base64')] : [],
+        stream: true
+      });
+  
+      // ✅ MOBILE STREAMING - Chunked response
+      res.set({
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Transfer-Encoding': 'chunked'
+      });
+  
+      let buffer = '';
+      for await (const chunk of stream) {
+        const text = chunk.message?.content || '';
+        buffer += text;
+        
+        // Send chunks every 100 chars
+        if (buffer.length > 100) {
+          res.write(buffer);
+          buffer = '';
         }
-      ],
-      images: imageFile?.buffer ? [Buffer.from(imageFile.buffer).toString('base64')] : [], // ✅ FIXED buffer
-      stream: true // ✅ Your streaming unchanged
-    });
-
-    let buffer = '';
-    for await (const chunk of stream) {
-      const text = chunk.message?.content || '';
-      buffer += text;
+      }
       
-      if (buffer.length > 50 || text.includes('\n\n') || text.includes('**')) {
-        res.write(buffer);
-        buffer = '';
-        res.flushHeaders();
+      if (buffer) res.write(buffer);
+      res.end('\n✅ ZOYA VISION + DB COMPLETE');
+  
+    } catch (error) {
+      console.error('💥 VisionAI ERROR:', error);
+      
+      // ✅ MOBILE ERROR FORMAT
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: 'Vision AI failed', 
+          message: error.message,
+          timestamp: new Date().toISOString()
+        });
       }
     }
-    
-    if (buffer) {
-      res.write(buffer);
-      res.flushHeaders();
-    }
-    
-    res.end('\n✅ ZOYA VISION + DB COMPLETE');
-    
-  } catch (error) {
-    console.error('💥 VisionAI ERROR:', error);
-    res.status(500).end(`❌ VisionAI failed: ${error.message}`);
-  }
-};
+  };
 
 // 6. Embeddings (unchanged)
 const embeddingsAI = async (req, res) => {
@@ -418,11 +412,11 @@ const embeddingsAI = async (req, res) => {
 };
 
 module.exports = {
-  basicAI,
-  streamAI,
-  thinkingAI,
-  structuredAI,
-  visionAI,
-  embeddingsAI,
-  upload
-};
+    basicAI,
+    streamAI,
+    thinkingAI,
+    structuredAI,
+    visionAI,  // ✅ Now handles req,res,next properly
+    embeddingsAI,
+    upload
+  };
