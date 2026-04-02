@@ -290,7 +290,7 @@ const visionAI = async (req, res) => {
     console.log('📊 Prices loaded:', Object.keys(zoyaPrices).length, 'zoya +', Object.keys(marketPrices).length, 'market');
 
     const stream = await ollama.chat({
-      model: 'gemma3', // ✅ Your model unchanged
+      model: 'gemma3:1b', // ✅ Your model unchanged
       messages: [
         {
           role: 'system',
