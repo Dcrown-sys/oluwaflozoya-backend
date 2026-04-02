@@ -7,7 +7,8 @@ const multer = require('multer');
 const cheerio = require('cheerio');
 
 const ollama = new Ollama({ 
-    host: process.env.OLLAMA_HOST || 'http://ollama:11434' 
+    host: process.env.OLLAMA_HOST || 'http://localhost:11434',
+    timeout: 120000
   });
 
 // Load materials SAFELY
@@ -353,7 +354,7 @@ BOM:
 Cement: 850×[DB PRICE]=₦7M
 Blocks: 12,500×[DB PRICE]=₦3.1M
 
-📞 ZOYA: +234-XXX-XXXXXX`
+📞 ZOYA: +2348063203385`
         },
         { 
           role: 'user', 
