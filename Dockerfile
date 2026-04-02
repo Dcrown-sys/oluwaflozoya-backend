@@ -15,7 +15,7 @@ COPY . .
 # 🔥 DELETE CORRUPTED MODELS + FRESH PULL
 RUN rm -rf /root/.ollama/models/* && \
     ollama serve & sleep 10 && \
-    ollama pull gemma3:1b && \
+    ollama pull gemma3 && \
     pkill ollama
 
 RUN mkdir -p uploads
