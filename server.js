@@ -267,7 +267,7 @@ async function initAI() {
 }
 
 // ======== START SERVER ========
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, '0.0.0.0', async () => {
   try {

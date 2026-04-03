@@ -1,4 +1,5 @@
-const { sql } = require('../db');  // ✅ Your template literal DB
+const { sql } = require('../db');  // ✅ Template literal DB (postgres.js)
+
 
 const getProjectDashboard = async (req, res) => {
   const { projectId } = req.params;
@@ -85,9 +86,138 @@ const getProjectDashboard = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Failed to load project dashboard",
-      error: error.message,  // ✅ Debug
+      error: error.message,
     });
   }
 };
 
-module.exports = { getProjectDashboard };  // ✅ CommonJS export
+const createProject = async (req, res) => {
+  try {
+    const {
+      buyerId,
+      projectName,
+      projectType,
+      location,
+      budget,
+      description,
+      targetCompletionDate,
+    } = req.body;
+
+    // Validation
+    if (!buyerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'buyerId is required',
+      });
+    }
+
+    if (!projectName || !projectName.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'projectName is required',
+      });
+    }
+
+    if (!location || !location.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'location is required',
+      });
+    }
+
+    if (!budget || Number(budget) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid budget is required',
+      });
+    }
+
+    // ✅ Convert to template literal SQL (consistent with getProjectDashboard)
+    const result = await sql`
+    INSERT INTO projects (
+      buyer_id,
+      project_name,
+      project_type,
+      location_address, 
+      project_description,  
+      start_date,  
+      estimated_end_date,
+      status
+    )
+    VALUES (
+      ${buyerId},
+      ${projectName.trim()},
+      ${projectType ? projectType.trim() : 'residential'},
+      ${location.trim()},  // ✅ Still use 'location' from req.body
+      ${description ? description.trim() : null},
+      ${targetCompletionDate || null},  // Use as estimated_end_date
+      ${targetCompletionDate || null},
+      'active'  // ✅ Match your default
+    )
+    RETURNING *;
+  `;
+
+    return res.status(201).json({
+      success: true,
+      message: 'Project created successfully',
+      data: result[0],
+    });
+  } catch (error) {
+    console.error('createProject error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to create project',
+      error: error.message,
+    });
+  }
+};
+
+const getBuyerProjects = async (req, res) => {
+  try {
+    const { buyerId } = req.params;
+
+    if (!buyerId) {
+      return res.status(400).json({
+        success: false,
+        message: 'buyerId is required',
+      });
+    }
+
+    // ✅ Convert to template literal SQL (consistent)
+    const result = await sql`
+  SELECT
+    id,
+    buyer_id,
+    project_name,
+    project_type,
+    location_address,  
+    project_description,  
+    start_date,
+    estimated_end_date,  
+    status,
+    created_at,
+    updated_at
+  FROM projects
+  WHERE buyer_id = ${buyerId}
+  ORDER BY created_at DESC
+`;
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error('getBuyerProjects error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch buyer projects',
+      error: error.message,
+    });
+  }
+};
+
+// ✅ Export ALL functions
+module.exports = { 
+  getProjectDashboard, 
+  createProject, 
+  getBuyerProjects 
+};
