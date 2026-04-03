@@ -93,81 +93,64 @@ const getProjectDashboard = async (req, res) => {
 
 const createProject = async (req, res) => {
   try {
-    const {
-      buyerId,
-      projectName,
-      projectType,
-      location,
-      budget,
-      description,
-      targetCompletionDate,
+    const { 
+      buyerId, 
+      projectName, 
+      projectType = 'residential', 
+      location, 
+      budget = 0, 
+      description, 
+      targetCompletionDate 
     } = req.body;
 
     // Validation
-    if (!buyerId) {
+    if (!buyerId || !projectName?.trim() || !location?.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'buyerId is required',
+        message: 'Required: buyerId, projectName, location'
       });
     }
 
-    if (!projectName || !projectName.trim()) {
+    // Verify user exists
+    const userCheck = await sql`SELECT id FROM users WHERE id = ${buyerId}`;
+    if (userCheck.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'projectName is required',
+        message: `User ${buyerId} not found`
       });
     }
 
-    if (!location || !location.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'location is required',
-      });
-    }
-
-    if (!budget || Number(budget) <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'A valid budget is required',
-      });
-    }
-
-    // ✅ Convert to template literal SQL (consistent with getProjectDashboard)
     const result = await sql`
-    INSERT INTO projects (
-      buyer_id,
-      project_name,
-      project_type,
-      location_address, 
-      project_description,  
-      start_date,  
-      estimated_end_date,
-      status
-    )
-    VALUES (
-      ${buyerId},
-      ${projectName.trim()},
-      ${projectType ? projectType.trim() : 'residential'},
-      ${location.trim()},  
-      ${description ? description.trim() : null},
-      ${targetCompletionDate || null},  
-      ${targetCompletionDate || null},
-      'active'  // ✅ Match your default
-    )
-    RETURNING *;
-  `;
+      INSERT INTO projects (
+        buyer_id, project_name, project_type, 
+        location_address, project_description, 
+        estimated_end_date, budget, status
+      )
+      VALUES (
+        ${buyerId},
+        ${projectName.trim()},
+        ${projectType},
+        ${location.trim()},
+        ${description ? description.trim() : null},
+        ${targetCompletionDate || null},
+        ${Number(budget)},
+        'active'
+      )
+      RETURNING *
+    `;
 
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       message: 'Project created successfully',
-      data: result[0],
+      data: result[0]
     });
+
   } catch (error) {
     console.error('createProject error:', error);
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
       message: 'Failed to create project',
-      error: error.message,
+      error: error.message
     });
   }
 };
