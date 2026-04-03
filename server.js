@@ -21,6 +21,7 @@ const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const aiController = require('./src/ai/controller');
+const projectRoutes = require('./routes/projectRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -92,6 +93,7 @@ app.use("/api/delivery", deliveryRoutes);
 app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
+app.use('/api', require('./routes/projectRoutes'));
 
 // AI Routes
 app.use('/api/ai/basic', aiController.basicAI);
