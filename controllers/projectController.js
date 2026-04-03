@@ -98,7 +98,6 @@ const createProject = async (req, res) => {
       projectName, 
       projectType = 'residential', 
       location, 
-      budget = 0, 
       description, 
       targetCompletionDate 
     } = req.body;
@@ -124,7 +123,7 @@ const createProject = async (req, res) => {
       INSERT INTO projects (
         buyer_id, project_name, project_type, 
         location_address, project_description, 
-        estimated_end_date, budget, status
+        estimated_end_date, status
       )
       VALUES (
         ${buyerId},
@@ -133,7 +132,6 @@ const createProject = async (req, res) => {
         ${location.trim()},
         ${description ? description.trim() : null},
         ${targetCompletionDate || null},
-        ${Number(budget)},
         'active'
       )
       RETURNING *
