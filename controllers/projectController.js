@@ -148,9 +148,9 @@ const createProject = async (req, res) => {
       ${buyerId},
       ${projectName.trim()},
       ${projectType ? projectType.trim() : 'residential'},
-      ${location.trim()},  // ✅ Still use 'location' from req.body
+      ${location.trim()},  
       ${description ? description.trim() : null},
-      ${targetCompletionDate || null},  // Use as estimated_end_date
+      ${targetCompletionDate || null},  
       ${targetCompletionDate || null},
       'active'  // ✅ Match your default
     )
