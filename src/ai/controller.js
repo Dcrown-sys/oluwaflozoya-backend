@@ -7,6 +7,7 @@ const multer = require('multer');
 const cheerio = require('cheerio');
 const axios = require('axios');
 
+
 const ollama = new Ollama({ 
     host: 'http://localhost:11434',  // HARDCODE for Render Docker
     timeout: 120000
@@ -412,72 +413,69 @@ const structuredAI = async (req, res) => {
 // ✅ FIXED visionAI - COMPLETE & WORKING
 const visionAI = async (req, res, next) => {
   try {
-
-    console.log('🔍 === VISION DEBUG ===');
-    console.log('req.file:', !!req.file);
-    console.log('req.file details:', req.file ? {
-      fieldname: req.file.fieldname,
-      originalname: req.file.originalname,
-      size: req.file.size,
-      path: req.file.path,
-      mimetype: req.file.mimetype
-    } : 'MISSING');
-    console.log('req.body:', req.body);
-    console.log('====================');
-
     const imageFile = req.file;
     const { message = 'analyze photo', location = 'lagos' } = req.body;
-
-    console.log('🔍 VisionAI:', { 
-      hasImage: !!imageFile, 
-      message, 
-      location, 
-      fileSize: imageFile?.size 
-    });
 
     const [zoyaPrices, marketPrices] = await Promise.all([
       getZoyaPricesFromDB(message),
       getMarketPrices(message)
     ]);
 
-    // ✅ FIXED SYSTEM PROMPT - COMPLETE
-    const systemPrompt = `👁️🏗️ ZOYA VISION AI - CONSTRUCTION MATERIAL ANALYZER
+    // 🔥 FIXED PROMPT - EXACT UNITS + QUANTITIES
+    const systemPrompt = `🏗️ ZOYA CONSTRUCTION AI - EXACT CALCULATIONS REQUIRED
 
-🚨 MANDATORY FORMAT:
+**MANDATORY UNITS & SPECS:**
+CEMENT: bags (50kg/bag)
+BLOCKS: pieces (6"/9" standard)
+SAND: tons OR trips (5-ton trip)
+TIMBER: pieces (12ft lengths)
+REBAR: tons OR lengths (12m lengths)
+ROOFING: sheets (long span aluminium)
 
-1. SCREEN & ANALYZE IMAGE - Identify ALL visible materials
-2. ZOYA PRICES FIRST - Use these DB prices:
+**ZOYAPRICES (USE THESE EXACTLY):**
 ${JSON.stringify(zoyaPrices, null, 2)}
 
-3. Market reference only: ${JSON.stringify(marketPrices, null, 2)}
+**MARKET (REFERENCE ONLY):**
+${JSON.stringify(marketPrices, null, 2)}
 
-**RESPONSE FORMAT:**
-**🏠 BUILDING:** [type]
-**🔍 MATERIALS:**
-- Material 1: ZOYA ₦XXX [unit] ✓ vs Market ₦XXX
-- Material 2: ZOYA ₦XXX [unit] ✓ vs Market ₦XXX
+**CALCULATE PROPERLY:**
+- Duplex foundation: 2000 blocks, 400 cement bags, 10 tons sand
+- Walls: 5000 blocks, 100 cement bags  
+- Roofing: 200 sheets aluminium
 
-**💰 TOTAL SAVINGS:** ₦XXX (XX%)
-**📞 CALL:** +2348063203385`;
+**FORMAT (NO KG CONFUSION):**
+**📐 BUILDING ANALYSIS**
+Plot: 50x30m | Duplex | 60% complete
 
-    // Vision processing (image + text)
+**🧱 MATERIALS + EXACT QUANTITIES**
+- Cement: 500 bags × ₦7,000 = ₦3.5M (ZOYA BUA)
+- Blocks: 7,000 pieces × ₦1,200 = ₦8.4M  
+- Sand: 20 tons × ₦230K = ₦4.6M (ZOYA Sharp)
+
+**💰 TOTAL: ₦XXM**
+**✅ ZOYA SAVINGS: ₦XXM vs Market**
+
+**📞 +2348063203385**`;
+
     const visionResponse = await ollama.chat({
-      model: 'gemma3',
+      model: 'llama3.1:8b', // Better JSON
       messages: [
         { role: 'system', content: systemPrompt },
         { 
           role: 'user', 
-          content: message,
+          content: `${message} (Lagos plot, duplex analysis)`,
           images: imageFile ? [fs.readFileSync(imageFile.path)] : []
         }
-      ]
+      ],
+      options: { temperature: 0.1, num_predict: 800 }
     });
 
     res.json({
       success: true,
       analysis: visionResponse.message.content,
       zoyaPrices,
-      marketPrices
+      marketPrices,
+      unitGuide: "Cement:bags | Blocks:pieces | Sand:tons | Timber:12ft pcs"
     });
 
   } catch (error) {
@@ -485,7 +483,6 @@ ${JSON.stringify(zoyaPrices, null, 2)}
     res.status(500).json({ error: error.message });
   }
 };
-
 // ✅ FIXED embeddingsAI - COMPLETE FUNCTION
 const embeddingsAI = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
