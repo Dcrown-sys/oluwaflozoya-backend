@@ -412,6 +412,19 @@ const structuredAI = async (req, res) => {
 // ✅ FIXED visionAI - COMPLETE & WORKING
 const visionAI = async (req, res, next) => {
   try {
+
+    console.log('🔍 === VISION DEBUG ===');
+    console.log('req.file:', !!req.file);
+    console.log('req.file details:', req.file ? {
+      fieldname: req.file.fieldname,
+      originalname: req.file.originalname,
+      size: req.file.size,
+      path: req.file.path,
+      mimetype: req.file.mimetype
+    } : 'MISSING');
+    console.log('req.body:', req.body);
+    console.log('====================');
+
     const imageFile = req.file;
     const { message = 'analyze photo', location = 'lagos' } = req.body;
 
@@ -449,7 +462,7 @@ ${JSON.stringify(zoyaPrices, null, 2)}
 
     // Vision processing (image + text)
     const visionResponse = await ollama.chat({
-      model: 'llama3.1:8b',
+      model: 'gemma3',
       messages: [
         { role: 'system', content: systemPrompt },
         { 

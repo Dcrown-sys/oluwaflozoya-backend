@@ -21,6 +21,7 @@ const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const aiController = require('./src/ai/controller');
+const controller = require('./src/ai/controller');
 const projectRoutes = require('./routes/projectRoutes');
 
 const app = express();
@@ -103,23 +104,8 @@ app.use('/api/ai/json', require('./src/ai/controller').structuredAI);
 
 // ✅ FIXED VISION ROUTE
 app.post('/api/ai/vision', 
-  require('./src/ai/controller').upload.single('image'), 
-  async (req, res, next) => {
-    try {
-      const result = await require('./src/ai/controller').visionAI(req, res, next);
-      if (!res.headersSent) {
-        res.json(result);
-      }
-    } catch (error) {
-      console.error('❌ Vision AI error:', error);
-      if (!res.headersSent) {
-        res.status(500).json({ 
-          error: 'Vision processing failed', 
-          message: error.message 
-        });
-      }
-    }
-  }
+  controller.upload.single('image'),  // ✅ Multer middleware
+  controller.visionAI                 // ✅ Direct controller call
 );
 
 // Debug route (keep if needed)
