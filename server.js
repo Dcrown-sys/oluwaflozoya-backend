@@ -20,8 +20,9 @@ const courierRoutes = require("./routes/courierRoutes");
 const deliveryRoutes = require("./routes/deliveryRoutes");
 const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
-const aiController = require('./src/ai/controller');
-const controller = require('./src/ai/controller');
+const multer = require('multer');
+const { analyzeConstruction } = require('./src/ai/geminiVision');
+
 const projectRoutes = require('./routes/projectRoutes');
 
 const app = express();
@@ -46,14 +47,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'multipart/form-data']
 }));
 
-// ✅ Large file/image support for vision AI
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(express.raw({ type: 'application/json', limit: '50mb' }));
 
-// ✅ Static files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-app.use('/ai-uploads', express.static('src/ai/uploads'));
+
 
 // Request logger
 app.use((req, res, next) => {
@@ -61,23 +56,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ======== HEALTH CHECKS - RENDER FIX ========
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    aiReady: AI_READY || false,
-    uptime: process.uptime()
-  });
-});
 
-app.get('/api/ai/vision/health', (req, res) => {
-  res.json({ 
-    status: 'vision-ready', 
-    aiReady: AI_READY || false,
-    endpoint: '/api/ai/vision'
-  });
-});
 
 // ======== ROUTES ========
 app.use('/api/payment', paymentsRoutes); // Webhook first
@@ -95,37 +74,42 @@ app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
 app.use('/api', require('./routes/projectRoutes'));
-
-// AI Routes
-app.use('/api/ai/basic', aiController.basicAI);
-app.use('/api/ai/stream', require('./src/ai/controller').streamAI);
-app.use('/api/ai/think', require('./src/ai/controller').thinkingAI);
-app.use('/api/ai/json', require('./src/ai/controller').structuredAI);
-
-// ✅ FIXED VISION ROUTE
 app.post('/api/ai/vision', 
-  controller.upload.single('image'),  // ✅ Multer middleware
-  controller.visionAI                 // ✅ Direct controller call
+  multer({ 
+    dest: 'uploads/',
+    limits: { fileSize: 20 * 1024 * 1024 }
+  }).single('image'),
+  analyzeConstruction
 );
 
-// Debug route (keep if needed)
-app.get('/debug/ollama', async (req, res) => {
+
+// Add this route to list YOUR available models
+app.get('/list-models', async (req, res) => {
   try {
-    const models = await getModels();
+    const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+    
+    // This lists ALL models your API key can access
+    const models = await genAI.listModels();
+    
+    const availableModels = models.models()
+      .filter(model => model.supportedGenerationMethods().includes('generateContent'))
+      .map(model => ({
+        name: model.name(),
+        displayName: model.displayName(),
+        description: model.description()
+      }));
+
     res.json({
-      ready: AI_READY,
-      models: models.map(m => ({
-        name: m.name,
-        size: m.size
-      }))
+      success: true,
+      availableModels: availableModels,
+      totalModels: availableModels.length
     });
-  } catch (err) {
-    res.json({
-      ready: false,
-      error: err.message
-    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
+
+
 
 // ======== SOCKET.IO ========
 io.on('connection', (socket) => {
@@ -210,47 +194,8 @@ async function checkOllama() {
   }
 }
 
-function pullModel() {
-  return new Promise((resolve, reject) => {
-    console.log('⬇️ Pulling gemma3:latest...');
-    exec('ollama pull gemma3:latest', (err, stdout, stderr) => {
-      if (err) {
-        console.error('❌ Pull failed:', stderr);
-        return reject(err);
-      }
-      console.log(stdout);
-      resolve();
-    });
-  });
-}
 
-async function getModels() {
-  const res = await axios.get('http://127.0.0.1:11434/api/tags');
-  return res.data.models || [];
-}
 
-async function ensureModel() {
-  const models = await getModels();
-  console.log('📦 Models found:', models.map(m => m.name));
-  const exists = models.some(m => m.name.includes('gemma3'));
-  if (!exists) {
-    console.log('⬇️ gemma3 not found, pulling...');
-    await pullModel();
-  } else {
-    console.log('✅ gemma3 already installed');
-  }
-}
-
-async function initAI() {
-  try {
-    await waitForOllama();
-    await ensureModel();
-    AI_READY = true;
-    console.log('🔥 AI is fully ready');
-  } catch (err) {
-    console.error('❌ AI init failed:', err.message);
-  }
-}
 
 // ======== START SERVER ========
 const PORT = process.env.PORT || 5000;
