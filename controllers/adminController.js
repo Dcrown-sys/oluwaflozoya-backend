@@ -26,18 +26,10 @@ const FLW_SECRET_HASH = process.env.FLW_SECRET_HASH;
 // ✅ Firebase Admin SDK Setup
 const admin = require("../config/firebase");
 
-
-let serviceAccount;
-try {
-  serviceAccount = require('../serviceAccountKey.json');
-} catch (e) {
-  console.log('⚠️ No serviceAccountKey.json - skipping Firebase');
-}
-
-if (serviceAccount) {
+if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    storageBucket: `oluwaflo-67d5b.appspot.com`
+    storageBucket: `${serviceAccount.project_id}.appspot.com`,
   });
 }
 const bucket = admin.storage().bucket();

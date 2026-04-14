@@ -171,5 +171,69 @@ router.post('/login-with-apple', async (req, res) => {
   }
 });
 
+// 🔥 EMAIL/PASSWORD FALLBACK (add this)
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    console.log('🔐 Email login:', email);
+
+    const users = await sql`
+      SELECT id, email, full_name, phone, password_hash, role 
+      FROM users WHERE email = ${email} LIMIT 1
+    `;
+
+    const user = users[0];
+    if (!user) return res.status(401).json({ success: false, error: 'Invalid credentials' });
+
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ success: false, error: 'Invalid credentials' });
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        email: user.email,
+        full_name: user.full_name,
+        phone: user.phone,
+        role: user.role,
+      },
+      token,
+    });
+  } catch (error) {
+    console.error('🚨 LOGIN ERROR:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// 🔥 JWT REFRESH (add this)
+router.post('/refresh', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, error: 'No token' });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const users = await sql`SELECT id, email, full_name, phone, role FROM users WHERE id = ${decoded.id}`;
+    
+    const user = users[0];
+    if (!user) return res.status(401).json({ success: false, error: 'User not found' });
+
+    const newToken = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({ success: true, user, token: newToken });
+  } catch (error) {
+    res.status(401).json({ success: false, error: 'Invalid token' });
+  }
+});
+
 
 module.exports = router;
