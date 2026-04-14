@@ -383,8 +383,7 @@ const createProjectMaterialPlan = async (req, res) => {
       });
     }
 
-    const estimatedTotalPrice =
-      Number(quantity) * Number(estimatedUnitPrice);
+    const estimatedTotalPrice = Number(quantity) * Number(estimatedUnitPrice);
 
     const result = await sql`
       INSERT INTO project_material_plans (
@@ -418,6 +417,79 @@ const createProjectMaterialPlan = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to add planned material",
+      error: error.message,
+    });
+  }
+};
+
+const updateProjectMaterialPlan = async (req, res) => {
+  const { projectId, materialPlanId } = req.params;
+  const { materialName, quantity, unit, estimatedUnitPrice } = req.body;
+
+  try {
+    if (!materialName?.trim() || !unit?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "materialName and unit are required",
+      });
+    }
+
+    if (!quantity || Number(quantity) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid quantity is required",
+      });
+    }
+
+    if (!estimatedUnitPrice || Number(estimatedUnitPrice) < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid estimatedUnitPrice is required",
+      });
+    }
+
+    const existing = await sql`
+      SELECT id
+      FROM project_material_plans
+      WHERE id = ${materialPlanId}
+        AND project_id = ${projectId}
+      LIMIT 1
+    `;
+
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Planned material not found",
+      });
+    }
+
+    const estimatedTotalPrice = Number(quantity) * Number(estimatedUnitPrice);
+
+    const result = await sql`
+      UPDATE project_material_plans
+      SET
+        material_name = ${materialName.trim()},
+        quantity = ${Number(quantity)},
+        unit = ${unit.trim()},
+        estimated_unit_price = ${Number(estimatedUnitPrice)},
+        estimated_total_price = ${estimatedTotalPrice}
+      WHERE id = ${materialPlanId}
+        AND project_id = ${projectId}
+      RETURNING *
+    `;
+
+    await recalculateProjectDashboard(projectId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Planned material updated successfully",
+      data: result[0],
+    });
+  } catch (error) {
+    console.error("updateProjectMaterialPlan error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update planned material",
       error: error.message,
     });
   }
@@ -528,12 +600,90 @@ const createProjectMaterialPurchase = async (req, res) => {
   }
 };
 
+const updateProjectMaterialPurchase = async (req, res) => {
+  const { projectId, purchaseId } = req.params;
+  const { materialName, quantity, unit, unitPrice, supplierName, purchasedAt } =
+    req.body;
+
+  try {
+    if (!materialName?.trim() || !unit?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "materialName and unit are required",
+      });
+    }
+
+    if (!quantity || Number(quantity) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid quantity is required",
+      });
+    }
+
+    if (!unitPrice || Number(unitPrice) < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid unitPrice is required",
+      });
+    }
+
+    const existing = await sql`
+      SELECT id
+      FROM project_material_purchases
+      WHERE id = ${purchaseId}
+        AND project_id = ${projectId}
+      LIMIT 1
+    `;
+
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Material purchase not found",
+      });
+    }
+
+    const totalPrice = Number(quantity) * Number(unitPrice);
+
+    const result = await sql`
+      UPDATE project_material_purchases
+      SET
+        material_name = ${materialName.trim()},
+        quantity = ${Number(quantity)},
+        unit = ${unit.trim()},
+        unit_price = ${Number(unitPrice)},
+        total_price = ${totalPrice},
+        supplier_name = ${supplierName ? supplierName.trim() : null},
+        purchased_at = ${purchasedAt || new Date().toISOString()}
+      WHERE id = ${purchaseId}
+        AND project_id = ${projectId}
+      RETURNING *
+    `;
+
+    await recalculateProjectDashboard(projectId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Material purchase updated successfully",
+      data: result[0],
+    });
+  } catch (error) {
+    console.error("updateProjectMaterialPurchase error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update material purchase",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getProjectDashboard,
   createProject,
   getBuyerProjects,
   getProjectMaterialPlans,
   createProjectMaterialPlan,
+  updateProjectMaterialPlan,
   getProjectMaterialPurchases,
   createProjectMaterialPurchase,
+  updateProjectMaterialPurchase,
 };
