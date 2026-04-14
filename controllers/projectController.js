@@ -1,4 +1,58 @@
-const { sql } = require('../db');
+const { sql } = require("../db");
+
+async function recalculateProjectDashboard(projectId) {
+  const dashboardRows = await sql`
+    SELECT total_budget
+    FROM project_dashboards
+    WHERE project_id = ${projectId}
+    LIMIT 1
+  `;
+
+  if (dashboardRows.length === 0) {
+    return null;
+  }
+
+  const dashboard = dashboardRows[0];
+  const totalBudget = Number(dashboard.total_budget || 0);
+
+  const plannedRows = await sql`
+    SELECT COUNT(*)::int AS total_planned
+    FROM project_material_plans
+    WHERE project_id = ${projectId}
+  `;
+
+  const purchasedRows = await sql`
+    SELECT
+      COUNT(*)::int AS total_purchased,
+      COALESCE(SUM(total_price), 0)::numeric AS spent_amount
+    FROM project_material_purchases
+    WHERE project_id = ${projectId}
+  `;
+
+  const totalMaterialsPlanned = Number(plannedRows[0]?.total_planned || 0);
+  const totalMaterialsPurchased = Number(purchasedRows[0]?.total_purchased || 0);
+  const spentAmount = Number(purchasedRows[0]?.spent_amount || 0);
+  const remainingAmount = Math.max(totalBudget - spentAmount, 0);
+
+  await sql`
+    UPDATE project_dashboards
+    SET
+      spent_amount = ${spentAmount},
+      remaining_amount = ${remainingAmount},
+      total_materials_planned = ${totalMaterialsPlanned},
+      total_materials_purchased = ${totalMaterialsPurchased},
+      updated_at = NOW()
+    WHERE project_id = ${projectId}
+  `;
+
+  return {
+    totalBudget,
+    spentAmount,
+    remainingAmount,
+    totalMaterialsPlanned,
+    totalMaterialsPurchased,
+  };
+}
 
 const getProjectDashboard = async (req, res) => {
   const { projectId } = req.params;
@@ -27,7 +81,21 @@ const getProjectDashboard = async (req, res) => {
 
     const dashboard = dashboardResult[0] || {};
 
-    const materialsResult = await sql`
+    const plannedMaterialsResult = await sql`
+      SELECT
+        id,
+        material_name,
+        quantity,
+        unit,
+        estimated_unit_price,
+        estimated_total_price,
+        created_at
+      FROM project_material_plans
+      WHERE project_id = ${projectId}
+      ORDER BY created_at DESC
+    `;
+
+    const purchasedMaterialsResult = await sql`
       SELECT
         id,
         material_name,
@@ -36,13 +104,12 @@ const getProjectDashboard = async (req, res) => {
         unit_price,
         total_price,
         supplier_name,
-        purchased_at
+        purchased_at,
+        created_at
       FROM project_material_purchases
       WHERE project_id = ${projectId}
       ORDER BY purchased_at DESC
     `;
-
-    const purchasedItems = materialsResult;
 
     return res.json({
       success: true,
@@ -61,7 +128,8 @@ const getProjectDashboard = async (req, res) => {
           totalMaterialsPurchased: Number(
             dashboard.total_materials_purchased || 0
           ),
-          purchasedItems,
+          plannedItems: plannedMaterialsResult,
+          purchasedItems: purchasedMaterialsResult,
         },
         timeline: {
           startDate: dashboard.start_date || null,
@@ -127,7 +195,6 @@ const createProject = async (req, res) => {
       });
     }
 
-    // 1. Insert into projects
     const projectResult = await sql`
       INSERT INTO projects (
         buyer_id,
@@ -150,7 +217,6 @@ const createProject = async (req, res) => {
 
     const createdProject = projectResult[0];
 
-    // 2. Insert into project_dashboards
     const dashboardResult = await sql`
       INSERT INTO project_dashboards (
         project_id,
@@ -258,8 +324,216 @@ const getBuyerProjects = async (req, res) => {
   }
 };
 
+const getProjectMaterialPlans = async (req, res) => {
+  const { projectId } = req.params;
+
+  try {
+    const result = await sql`
+      SELECT
+        id,
+        project_id,
+        material_name,
+        quantity,
+        unit,
+        estimated_unit_price,
+        estimated_total_price,
+        created_at
+      FROM project_material_plans
+      WHERE project_id = ${projectId}
+      ORDER BY created_at DESC
+    `;
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("getProjectMaterialPlans error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch project material plans",
+      error: error.message,
+    });
+  }
+};
+
+const createProjectMaterialPlan = async (req, res) => {
+  const { projectId } = req.params;
+  const { materialName, quantity, unit, estimatedUnitPrice } = req.body;
+
+  try {
+    if (!materialName?.trim() || !unit?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "materialName and unit are required",
+      });
+    }
+
+    if (!quantity || Number(quantity) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid quantity is required",
+      });
+    }
+
+    if (!estimatedUnitPrice || Number(estimatedUnitPrice) < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid estimatedUnitPrice is required",
+      });
+    }
+
+    const estimatedTotalPrice =
+      Number(quantity) * Number(estimatedUnitPrice);
+
+    const result = await sql`
+      INSERT INTO project_material_plans (
+        project_id,
+        material_name,
+        quantity,
+        unit,
+        estimated_unit_price,
+        estimated_total_price
+      )
+      VALUES (
+        ${projectId},
+        ${materialName.trim()},
+        ${Number(quantity)},
+        ${unit.trim()},
+        ${Number(estimatedUnitPrice)},
+        ${estimatedTotalPrice}
+      )
+      RETURNING *
+    `;
+
+    await recalculateProjectDashboard(projectId);
+
+    return res.status(201).json({
+      success: true,
+      message: "Planned material added successfully",
+      data: result[0],
+    });
+  } catch (error) {
+    console.error("createProjectMaterialPlan error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add planned material",
+      error: error.message,
+    });
+  }
+};
+
+const getProjectMaterialPurchases = async (req, res) => {
+  const { projectId } = req.params;
+
+  try {
+    const result = await sql`
+      SELECT
+        id,
+        project_id,
+        material_name,
+        quantity,
+        unit,
+        unit_price,
+        total_price,
+        supplier_name,
+        purchased_at,
+        created_at
+      FROM project_material_purchases
+      WHERE project_id = ${projectId}
+      ORDER BY purchased_at DESC
+    `;
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("getProjectMaterialPurchases error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch project material purchases",
+      error: error.message,
+    });
+  }
+};
+
+const createProjectMaterialPurchase = async (req, res) => {
+  const { projectId } = req.params;
+  const { materialName, quantity, unit, unitPrice, supplierName, purchasedAt } =
+    req.body;
+
+  try {
+    if (!materialName?.trim() || !unit?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "materialName and unit are required",
+      });
+    }
+
+    if (!quantity || Number(quantity) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid quantity is required",
+      });
+    }
+
+    if (!unitPrice || Number(unitPrice) < 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid unitPrice is required",
+      });
+    }
+
+    const totalPrice = Number(quantity) * Number(unitPrice);
+
+    const result = await sql`
+      INSERT INTO project_material_purchases (
+        project_id,
+        material_name,
+        quantity,
+        unit,
+        unit_price,
+        total_price,
+        supplier_name,
+        purchased_at
+      )
+      VALUES (
+        ${projectId},
+        ${materialName.trim()},
+        ${Number(quantity)},
+        ${unit.trim()},
+        ${Number(unitPrice)},
+        ${totalPrice},
+        ${supplierName ? supplierName.trim() : null},
+        ${purchasedAt || new Date().toISOString()}
+      )
+      RETURNING *
+    `;
+
+    await recalculateProjectDashboard(projectId);
+
+    return res.status(201).json({
+      success: true,
+      message: "Material purchase added successfully",
+      data: result[0],
+    });
+  } catch (error) {
+    console.error("createProjectMaterialPurchase error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add material purchase",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getProjectDashboard,
   createProject,
   getBuyerProjects,
+  getProjectMaterialPlans,
+  createProjectMaterialPlan,
+  getProjectMaterialPurchases,
+  createProjectMaterialPurchase,
 };

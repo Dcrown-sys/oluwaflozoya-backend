@@ -1,16 +1,27 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-// ✅ Import ALL 3 functions
-const { 
-  getProjectDashboard, 
-  createProject, 
-  getBuyerProjects 
-} = require('../controllers/projectController');
+const {
+  getProjectDashboard,
+  createProject,
+  getBuyerProjects,
+  getProjectMaterialPlans,
+  createProjectMaterialPlan,
+  getProjectMaterialPurchases,
+  createProjectMaterialPurchase,
+} = require("../controllers/projectController");
 
-// ✅ All routes now work
-router.get('/projects/:projectId/dashboard', getProjectDashboard);
-router.post('/projects', createProject);
-router.get('/projects/buyer/:buyerId', getBuyerProjects);
+// project main routes
+router.post("/projects", createProject);
+router.get("/projects/buyer/:buyerId", getBuyerProjects);
+router.get("/projects/:projectId/dashboard", getProjectDashboard);
+
+// project material plans
+router.get("/projects/:projectId/material-plans", getProjectMaterialPlans);
+router.post("/projects/:projectId/material-plans", createProjectMaterialPlan);
+
+// project material purchases
+router.get("/projects/:projectId/material-purchases", getProjectMaterialPurchases);
+router.post("/projects/:projectId/material-purchases", createProjectMaterialPurchase);
 
 module.exports = router;
