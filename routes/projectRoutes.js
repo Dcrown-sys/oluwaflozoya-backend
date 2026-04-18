@@ -11,6 +11,9 @@ const {
   getProjectMaterialPurchases,
   createProjectMaterialPurchase,
   updateProjectMaterialPurchase,
+  deleteProjectMaterialPlan,
+  updateProject,
+  deleteProjectMaterialPurchase,
 } = require("../controllers/projectController");
 
 // project main routes
@@ -33,5 +36,12 @@ router.put(
   "/projects/:projectId/material-purchases/:purchaseId",
   updateProjectMaterialPurchase
 );
+router.put("/projects/:projectId", updateProject);
+
+// 2. DELETE MATERIAL PLAN - Missing  
+router.delete("/projects/:projectId/material-plans/:materialPlanId", deleteProjectMaterialPlan);
+
+// 3. DELETE MATERIAL PURCHASE - Missing
+router.delete("/projects/:projectId/material-purchases/:purchaseId", deleteProjectMaterialPurchase);
 
 module.exports = router;

@@ -30,7 +30,9 @@ async function recalculateProjectDashboard(projectId) {
   `;
 
   const totalMaterialsPlanned = Number(plannedRows[0]?.total_planned || 0);
-  const totalMaterialsPurchased = Number(purchasedRows[0]?.total_purchased || 0);
+  const totalMaterialsPurchased = Number(
+    purchasedRows[0]?.total_purchased || 0
+  );
   const spentAmount = Number(purchasedRows[0]?.spent_amount || 0);
   const remainingAmount = Math.max(totalBudget - spentAmount, 0);
 
@@ -275,6 +277,105 @@ const createProject = async (req, res) => {
   }
 };
 
+const updateProject = async (req, res) => {
+  const { projectId } = req.params;
+  const {
+    projectName,
+    projectType = "residential",
+    location,
+    description,
+    totalBudget,
+    startDate,
+    estimatedEndDate,
+  } = req.body;
+
+  try {
+    if (!projectId) {
+      return res.status(400).json({
+        success: false,
+        message: "Project ID is required",
+      });
+    }
+
+    if (!projectName?.trim() || !location?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Project name and location are required",
+      });
+    }
+
+    if (!totalBudget || Number(totalBudget) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid totalBudget is required",
+      });
+    }
+
+    const existingProject = await sql`
+      SELECT id
+      FROM projects
+      WHERE id = ${projectId}
+      LIMIT 1
+    `;
+
+    if (existingProject.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Project not found",
+      });
+    }
+
+    const projectResult = await sql`
+      UPDATE projects
+      SET
+        project_name = ${projectName.trim()},
+        project_type = ${projectType},
+        location_address = ${location.trim()},
+        project_description = ${description ? description.trim() : null},
+        updated_at = NOW()
+      WHERE id = ${projectId}
+      RETURNING *
+    `;
+
+    const dashboardResult = await sql`
+      UPDATE project_dashboards
+      SET
+        total_budget = ${Number(totalBudget)},
+        remaining_amount = GREATEST(${Number(totalBudget)} - spent_amount, 0),
+        start_date = ${startDate || null},
+        estimated_end_date = ${estimatedEndDate || null},
+        updated_at = NOW()
+      WHERE project_id = ${projectId}
+      RETURNING *
+    `;
+
+    const updatedProject = projectResult[0];
+    const updatedDashboard = dashboardResult[0] || {};
+
+    return res.status(200).json({
+      success: true,
+      message: "Project updated successfully",
+      data: {
+        ...updatedProject,
+        budget: Number(updatedDashboard.total_budget || 0),
+        total_budget: Number(updatedDashboard.total_budget || 0),
+        start_date: updatedDashboard.start_date || null,
+        estimated_end_date: updatedDashboard.estimated_end_date || null,
+        spent_amount: Number(updatedDashboard.spent_amount || 0),
+        remaining_amount: Number(updatedDashboard.remaining_amount || 0),
+        current_stage: updatedDashboard.current_stage || "planning",
+      },
+    });
+  } catch (error) {
+    console.error("updateProject error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update project",
+      error: error.message,
+    });
+  }
+};
+
 const getBuyerProjects = async (req, res) => {
   try {
     const { buyerId } = req.params;
@@ -495,6 +596,47 @@ const updateProjectMaterialPlan = async (req, res) => {
   }
 };
 
+const deleteProjectMaterialPlan = async (req, res) => {
+  const { projectId, materialPlanId } = req.params;
+
+  try {
+    const existing = await sql`
+      SELECT id
+      FROM project_material_plans
+      WHERE id = ${materialPlanId}
+        AND project_id = ${projectId}
+      LIMIT 1
+    `;
+
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Planned material not found",
+      });
+    }
+
+    await sql`
+      DELETE FROM project_material_plans
+      WHERE id = ${materialPlanId}
+        AND project_id = ${projectId}
+    `;
+
+    await recalculateProjectDashboard(projectId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Planned material deleted successfully",
+    });
+  } catch (error) {
+    console.error("deleteProjectMaterialPlan error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete planned material",
+      error: error.message,
+    });
+  }
+};
+
 const getProjectMaterialPurchases = async (req, res) => {
   const { projectId } = req.params;
 
@@ -676,14 +818,58 @@ const updateProjectMaterialPurchase = async (req, res) => {
   }
 };
 
+const deleteProjectMaterialPurchase = async (req, res) => {
+  const { projectId, purchaseId } = req.params;
+
+  try {
+    const existing = await sql`
+      SELECT id
+      FROM project_material_purchases
+      WHERE id = ${purchaseId}
+        AND project_id = ${projectId}
+      LIMIT 1
+    `;
+
+    if (existing.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Material purchase not found",
+      });
+    }
+
+    await sql`
+      DELETE FROM project_material_purchases
+      WHERE id = ${purchaseId}
+        AND project_id = ${projectId}
+    `;
+
+    await recalculateProjectDashboard(projectId);
+
+    return res.status(200).json({
+      success: true,
+      message: "Material purchase deleted successfully",
+    });
+  } catch (error) {
+    console.error("deleteProjectMaterialPurchase error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete material purchase",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   getProjectDashboard,
   createProject,
+  updateProject,
   getBuyerProjects,
   getProjectMaterialPlans,
   createProjectMaterialPlan,
   updateProjectMaterialPlan,
+  deleteProjectMaterialPlan,
   getProjectMaterialPurchases,
   createProjectMaterialPurchase,
   updateProjectMaterialPurchase,
+  deleteProjectMaterialPurchase,
 };
