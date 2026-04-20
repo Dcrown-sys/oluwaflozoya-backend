@@ -89,7 +89,7 @@ const analyzeConstruction = async (req, res) => {
       success: true,
       report: {
         executiveSummary: "📊 Professional QS Report Generated",
-        totalCost: "₦XX Million (Click for details)",
+        totalCost: "Click for details",
         keyMaterials: ["Concrete", "Cement", "Blocks", "Steel", "Roofing"],
         detailedTakeoff: responseText, // Full professional report
         recommendations: "✅ Design optimized for your specs",
