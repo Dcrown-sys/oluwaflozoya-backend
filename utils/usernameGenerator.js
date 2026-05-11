@@ -12,6 +12,6 @@ function generateEngineerUsername(fullName = "") {
   return `ZOYA-${base}${randomNumber}`;
 }
 
-export default {
+module.exports = {
   generateEngineerUsername,
 };

@@ -1,4 +1,192 @@
 const { sql } = require("../db");
+const { generateEngineerUsername } = require("../utils/usernameGenerator");
+
+async function createUniqueUsername(fullName) {
+  let username;
+  let exists = true;
+
+  while (exists) {
+    username = generateEngineerUsername(fullName);
+
+    const [existingUser] = await sql`
+      SELECT id
+      FROM users
+      WHERE username = ${username}
+      LIMIT 1
+    `;
+
+    exists = !!existingUser;
+  }
+
+  return username;
+}
+
+exports.onboardEngineer = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const {
+      specialty,
+      years_of_experience,
+      company_name,
+      location,
+      referral_username,
+    } = req.body;
+
+    const [user] = await sql`
+      SELECT id, full_name, email, phone, role, username, username_confirmed, referred_by_user_id
+      FROM users
+      WHERE id = ${userId}
+      LIMIT 1
+    `;
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found",
+      });
+    }
+
+    let finalUsername = user.username;
+
+    if (!finalUsername) {
+      finalUsername = await createUniqueUsername(user.full_name);
+
+      await sql`
+        UPDATE users
+        SET
+          username = ${finalUsername},
+          username_confirmed = false,
+          engineer_onboarding_required = true
+        WHERE id = ${userId}
+      `;
+    }
+
+    let referrer = null;
+
+    if (referral_username && !user.referred_by_user_id) {
+      const [foundReferrer] = await sql`
+        SELECT id, username
+        FROM users
+        WHERE username = ${referral_username}
+        LIMIT 1
+      `;
+
+      if (!foundReferrer) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid referral username",
+        });
+      }
+
+      if (foundReferrer.id === userId) {
+        return res.status(400).json({
+          success: false,
+          error: "You cannot refer yourself",
+        });
+      }
+
+      referrer = foundReferrer;
+
+      await sql`
+        UPDATE users
+        SET referred_by_user_id = ${referrer.id}
+        WHERE id = ${userId}
+      `;
+
+      await sql`
+        INSERT INTO engineer_referrals (
+          referrer_user_id,
+          referred_user_id,
+          status,
+          created_at
+        )
+        VALUES (
+          ${referrer.id},
+          ${userId},
+          'signed_up',
+          NOW()
+        )
+        ON CONFLICT (referrer_user_id, referred_user_id)
+        DO NOTHING
+      `;
+    }
+
+    const [existingProfile] = await sql`
+      SELECT *
+      FROM engineer_profiles
+      WHERE user_id = ${userId}
+      LIMIT 1
+    `;
+
+    let profile = existingProfile;
+
+    if (!profile) {
+      const [newProfile] = await sql`
+        INSERT INTO engineer_profiles (
+          user_id,
+          specialty,
+          years_of_experience,
+          company_name,
+          location,
+          rank,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ${userId},
+          ${specialty || null},
+          ${years_of_experience || 0},
+          ${company_name || null},
+          ${location || null},
+          'Bronze',
+          NOW(),
+          NOW()
+        )
+        RETURNING *
+      `;
+
+      profile = newProfile;
+    } else {
+      const [updatedProfile] = await sql`
+        UPDATE engineer_profiles
+        SET
+          specialty = COALESCE(${specialty || null}, specialty),
+          years_of_experience = COALESCE(${years_of_experience || null}, years_of_experience),
+          company_name = COALESCE(${company_name || null}, company_name),
+          location = COALESCE(${location || null}, location),
+          updated_at = NOW()
+        WHERE user_id = ${userId}
+        RETURNING *
+      `;
+
+      profile = updatedProfile;
+    }
+
+    const [updatedUser] = await sql`
+      UPDATE users
+      SET role = 'engineer'
+      WHERE id = ${userId}
+      RETURNING id, full_name, email, phone, role, username, username_confirmed, engineer_onboarding_required, referred_by_user_id
+    `;
+
+    return res.json({
+      success: true,
+      message: "Engineer onboarding completed",
+      user: updatedUser,
+      profile,
+      referrer,
+    });
+  } catch (error) {
+    console.error("🚨 Engineer onboarding error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};
 
 exports.getEngineerDashboard = async (req, res) => {
   try {
@@ -18,12 +206,22 @@ exports.getEngineerDashboard = async (req, res) => {
       });
     }
 
+    const [user] = await sql`
+      SELECT id, full_name, email, phone, role, username, username_confirmed, engineer_onboarding_required
+      FROM users
+      WHERE id = ${userId}
+      LIMIT 1
+    `;
+
     const referrals = await sql`
       SELECT
-        u.id,
+        er.id,
+        er.status,
+        er.created_at,
+        u.id AS referred_user_id,
         u.full_name,
         u.username,
-        u.created_at
+        u.email
       FROM engineer_referrals er
       JOIN users u
         ON er.referred_user_id = u.id
@@ -47,10 +245,22 @@ exports.getEngineerDashboard = async (req, res) => {
       LIMIT 20
     `;
 
+    const [summary] = await sql`
+      SELECT
+        COALESCE(SUM(CASE WHEN source_type = 'purchase' THEN points ELSE 0 END), 0) AS purchase_points,
+        COALESCE(SUM(CASE WHEN source_type = 'referral' THEN points ELSE 0 END), 0) AS referral_points,
+        COALESCE(SUM(CASE WHEN source_type = 'bonus' THEN points ELSE 0 END), 0) AS bonus_points,
+        COUNT(*) AS total_point_records
+      FROM engineer_points
+      WHERE user_id = ${userId}
+    `;
+
     return res.json({
       success: true,
       dashboard: {
+        user,
         profile,
+        summary,
         referrals,
         withdrawals,
         pointsHistory,
@@ -62,6 +272,7 @@ exports.getEngineerDashboard = async (req, res) => {
     return res.status(500).json({
       success: false,
       error: "Server error",
+      details: error.message,
     });
   }
 };
@@ -70,17 +281,33 @@ exports.confirmUsername = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    await sql`
+    const [user] = await sql`
+      SELECT id, username
+      FROM users
+      WHERE id = ${userId}
+      LIMIT 1
+    `;
+
+    if (!user || !user.username) {
+      return res.status(400).json({
+        success: false,
+        error: "No username assigned yet. Please complete onboarding first.",
+      });
+    }
+
+    const [updatedUser] = await sql`
       UPDATE users
       SET
         username_confirmed = true,
         engineer_onboarding_required = false
       WHERE id = ${userId}
+      RETURNING id, full_name, email, phone, role, username, username_confirmed, engineer_onboarding_required
     `;
 
     return res.json({
       success: true,
       message: "Username confirmed successfully",
+      user: updatedUser,
     });
   } catch (error) {
     console.error("🚨 Username confirmation error:", error);
@@ -88,6 +315,7 @@ exports.confirmUsername = async (req, res) => {
     return res.status(500).json({
       success: false,
       error: "Server error",
+      details: error.message,
     });
   }
 };
