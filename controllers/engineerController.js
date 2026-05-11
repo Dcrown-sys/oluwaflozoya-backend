@@ -319,3 +319,156 @@ exports.confirmUsername = async (req, res) => {
     });
   }
 };
+
+exports.getEngineerWallet = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [profile] = await sql`
+      SELECT 
+        total_points,
+        available_points,
+        pending_points,
+        total_withdrawn,
+        rank
+      FROM engineer_profiles
+      WHERE user_id = ${userId}
+      LIMIT 1
+    `;
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        error: "Engineer profile not found",
+      });
+    }
+
+    const withdrawals = await sql`
+      SELECT *
+      FROM engineer_withdrawals
+      WHERE user_id = ${userId}
+      ORDER BY requested_at DESC
+    `;
+
+    return res.json({
+      success: true,
+      wallet: {
+        ...profile,
+        withdrawals,
+      },
+    });
+  } catch (error) {
+    console.error("🚨 Engineer wallet error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};
+
+exports.requestWithdrawal = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const {
+      amount,
+      bank_name,
+      account_number,
+      account_name,
+    } = req.body;
+
+    if (!amount || !bank_name || !account_number || !account_name) {
+      return res.status(400).json({
+        success: false,
+        error: "Amount, bank name, account number, and account name are required",
+      });
+    }
+
+    const [settings] = await sql`
+      SELECT minimum_withdrawal_amount, point_to_naira_rate
+      FROM engineer_reward_settings
+      LIMIT 1
+    `;
+
+    const minimumWithdrawal = Number(settings?.minimum_withdrawal_amount || 10000);
+    const pointToNairaRate = Number(settings?.point_to_naira_rate || 1);
+
+    if (Number(amount) < minimumWithdrawal) {
+      return res.status(400).json({
+        success: false,
+        error: `Minimum withdrawal amount is ₦${minimumWithdrawal.toLocaleString()}`,
+      });
+    }
+
+    const [profile] = await sql`
+      SELECT available_points
+      FROM engineer_profiles
+      WHERE user_id = ${userId}
+      LIMIT 1
+    `;
+
+    if (!profile) {
+      return res.status(404).json({
+        success: false,
+        error: "Engineer profile not found",
+      });
+    }
+
+    const pointsNeeded = Number(amount) / pointToNairaRate;
+
+    if (Number(profile.available_points) < pointsNeeded) {
+      return res.status(400).json({
+        success: false,
+        error: "Insufficient available points",
+      });
+    }
+
+    const [withdrawal] = await sql`
+      INSERT INTO engineer_withdrawals (
+        user_id,
+        amount,
+        points_used,
+        bank_name,
+        account_number,
+        account_name,
+        status,
+        requested_at
+      )
+      VALUES (
+        ${userId},
+        ${amount},
+        ${pointsNeeded},
+        ${bank_name},
+        ${account_number},
+        ${account_name},
+        'pending',
+        NOW()
+      )
+      RETURNING *
+    `;
+
+    await sql`
+      UPDATE engineer_profiles
+      SET
+        available_points = available_points - ${pointsNeeded},
+        pending_points = pending_points + ${pointsNeeded},
+        updated_at = NOW()
+      WHERE user_id = ${userId}
+    `;
+
+    return res.json({
+      success: true,
+      message: "Withdrawal request submitted successfully. Payment will be processed within 7 business days after verification.",
+      withdrawal,
+    });
+  } catch (error) {
+    console.error("🚨 Withdrawal request error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};
+
