@@ -8,16 +8,45 @@ const { sql } = require("../db");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
 
-// POST /auth/firebase-login
+function buildUserResponse(user) {
+  return {
+    id: user.id,
+    firebase_uid: user.firebase_uid || null,
+    email: user.email,
+    phone: user.phone || null,
+    full_name: user.full_name || "User",
+    role: user.role,
+    status: user.status || null,
+    username: user.username || null,
+    username_confirmed: user.username_confirmed || false,
+    engineer_onboarding_required: user.engineer_onboarding_required || false,
+    referred_by_user_id: user.referred_by_user_id || null,
+  };
+}
+
+function generateToken(user) {
+  return jwt.sign(
+    {
+      id: user.id,
+      firebase_uid: user.firebase_uid || null,
+      email: user.email,
+      role: user.role,
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+// POST /api/auth/firebase-login
 router.post("/firebase-login", async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.error("❌ Missing or invalid Authorization header");
-      return res
-        .status(400)
-        .json({ error: "Missing or invalid Authorization header" });
+      return res.status(400).json({
+        success: false,
+        error: "Missing or invalid Authorization header",
+      });
     }
 
     const idToken = authHeader.split(" ")[1];
@@ -37,21 +66,35 @@ router.post("/firebase-login", async (req, res) => {
     } = req.body;
 
     if (!firebase_uid) {
-      console.error("❌ firebase_uid is undefined");
-      return res.status(400).json({ error: "Missing firebase_uid from token" });
+      return res.status(400).json({
+        success: false,
+        error: "Missing firebase_uid from token",
+      });
     }
 
-    // Check if user exists
-    const existingUsers = await sql`
-      SELECT * FROM users WHERE firebase_uid = ${firebase_uid}
+    let [user] = await sql`
+      SELECT *
+      FROM users
+      WHERE firebase_uid = ${firebase_uid}
+         OR email = ${email}
+      LIMIT 1
     `;
 
-    let user;
-    if (existingUsers.length > 0) {
-      user = existingUsers[0];
-      console.log("👤 Existing user found:", user);
+    if (user) {
+      const [updatedUser] = await sql`
+        UPDATE users
+        SET
+          firebase_uid = COALESCE(firebase_uid, ${firebase_uid}),
+          email = COALESCE(email, ${email}),
+          phone = COALESCE(phone, ${phone || null}),
+          full_name = COALESCE(full_name, ${fullName || decodedToken.name || "User"}),
+          updated_at = NOW()
+        WHERE id = ${user.id}
+        RETURNING *
+      `;
+
+      user = updatedUser;
     } else {
-      // Create new user
       const [newUser] = await sql`
         INSERT INTO users (
           firebase_uid,
@@ -62,190 +105,165 @@ router.post("/firebase-login", async (req, res) => {
           address,
           delivery_address,
           latitude,
-          longitude
+          longitude,
+          status,
+          created_at
         )
         VALUES (
           ${firebase_uid},
           ${email},
-          ${phone},
-          ${role},
-          ${fullName},
-          ${address},
-          ${deliveryAddress},
-          ${latitude},
-          ${longitude}
+          ${phone || null},
+          ${role || "buyer"},
+          ${fullName || decodedToken.name || "User"},
+          ${address || null},
+          ${deliveryAddress || null},
+          ${latitude || null},
+          ${longitude || null},
+          'active',
+          NOW()
         )
         RETURNING *
       `;
 
       user = newUser;
-      console.log("✅ New user created:", user);
     }
 
-    // ✅ Ensure courier exists if role is courier
     if (user.role === "courier") {
       const [courier] = await sql`
-        SELECT * FROM couriers WHERE user_id = ${user.id}
+        SELECT *
+        FROM couriers
+        WHERE user_id = ${user.id}
+        LIMIT 1
       `;
-      if (courier) {
-        console.log("✅ Courier already exists:", courier);
-      } else {
-        const [newCourier] = await sql`
+
+      if (!courier) {
+        await sql`
           INSERT INTO couriers (user_id, status, created_at)
           VALUES (${user.id}, 'available', NOW())
-          RETURNING *
         `;
-        console.log("✅ New courier created:", newCourier);
       }
     }
 
-    // Generate backend JWT token
-    const token = jwt.sign(
-      {
-        id: user.id,
-        firebase_uid: user.firebase_uid,
-        role: user.role,
-      },
-      JWT_SECRET,
-      { expiresIn: "7d" },
-    );
+    const token = generateToken(user);
 
     return res.status(200).json({
       success: true,
-      message:
-        existingUsers.length > 0
-          ? "User already exists"
-          : "User created successfully",
-      user,
+      message: "Login successful",
+      user: buildUserResponse(user),
       token,
     });
   } catch (error) {
     console.error("❌ Firebase login error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: "Internal Server Error",
-      details: error.message || error,
+      details: error.message,
     });
   }
 });
 
-// POST /auth/login-with-apple
+// POST /api/auth/login-with-apple
 router.post("/login-with-apple", async (req, res) => {
   try {
     const { firebaseUid, email } = req.body;
 
     if (!firebaseUid || !email) {
-      return res
-        .status(400)
-        .json({ error: "Firebase UID and email are required" });
+      return res.status(400).json({
+        success: false,
+        error: "Firebase UID and email are required",
+      });
     }
 
-    // Check if user exists by Firebase UID or email
-    const existingUsers = await sql`
-      SELECT * FROM users WHERE firebase_uid = ${firebaseUid} OR email = ${email}
+    const [user] = await sql`
+      SELECT *
+      FROM users
+      WHERE firebase_uid = ${firebaseUid}
+         OR email = ${email}
+      LIMIT 1
     `;
 
-    if (existingUsers.length === 0) {
-      // User doesn't exist, return error to prompt signup
-      return res
-        .status(404)
-        .json({ error: "User not found. Please sign up first." });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: "User not found. Please sign up first.",
+      });
     }
 
-    const user = existingUsers[0];
-    console.log("👤 Existing user found:", user);
-
-    // Generate backend JWT token
-    const token = jwt.sign(
-      {
-        id: user.id,
-        firebase_uid: user.firebase_uid,
-        role: user.role,
-      },
-      JWT_SECRET,
-      { expiresIn: "7d" },
-    );
+    const token = generateToken(user);
 
     return res.status(200).json({
       success: true,
-      user,
+      user: buildUserResponse(user),
       token,
     });
   } catch (error) {
     console.error("❌ Apple login error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: "Internal Server Error",
-      details: error.message || error,
+      details: error.message,
     });
   }
 });
 
-// 🔥 EMAIL/PASSWORD FALLBACK (add this)
+// POST /api/auth/login
+// Use this mainly for admin/password accounts, not Firebase mobile users.
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log("🔐 Email login:", email);
 
-    const users = await sql`
-SELECT id, email, full_name, phone, password, role, username, username_confirmed, engineer_onboarding_required
-FROM users 
-WHERE email = ${email} 
-LIMIT 1
-    `;
-
-    const user = users[0];
-    if (!user)
-      return res
-        .status(401)
-        .json({ success: false, error: "Invalid credentials" });
-
-    if (!user.password) {
-      return res.status(401).json({
+    if (!email || !password) {
+      return res.status(400).json({
         success: false,
-        error:
-          "This account does not have a password login. Please use Firebase login.",
+        error: "Email and password are required",
       });
     }
 
-    let valid = false;
+    const [user] = await sql`
+      SELECT *
+      FROM users
+      WHERE LOWER(email) = LOWER(${email})
+      LIMIT 1
+    `;
 
-    if (user.password.startsWith("$2a$") || user.password.startsWith("$2b$")) {
-      valid = await bcrypt.compare(password, user.password);
-    } else {
-      valid = password === user.password;
+    if (!user || !user.password) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid email or password",
+      });
     }
+
+    const isHash =
+      user.password.startsWith("$2a$") ||
+      user.password.startsWith("$2b$") ||
+      user.password.startsWith("$2y$");
+
+    if (!isHash) {
+      return res.status(401).json({
+        success: false,
+        error: "Password is not securely set. Please reset password.",
+      });
+    }
+
+    const valid = await bcrypt.compare(password, user.password);
 
     if (!valid) {
       return res.status(401).json({
         success: false,
-        error: "Invalid credentials",
+        error: "Invalid email or password",
       });
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" },
-    );
+    const token = generateToken(user);
 
-    res.json({
+    return res.json({
       success: true,
-      user: {
-        id: user.id,
-        email: user.email,
-        full_name: user.full_name,
-        phone: user.phone,
-        role: user.role,
-        username: user.username,
-        username_confirmed: user.username_confirmed,
-        engineer_onboarding_required: user.engineer_onboarding_required,
-      },
+      user: buildUserResponse(user),
       token,
     });
   } catch (error) {
     console.error("🚨 LOGIN ERROR:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: "Server error",
       details: error.message,
@@ -253,32 +271,46 @@ LIMIT 1
   }
 });
 
-// 🔥 JWT REFRESH (add this)
+// POST /api/auth/refresh
 router.post("/refresh", async (req, res) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
-    if (!token)
-      return res.status(401).json({ success: false, error: "No token" });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const users =
-      await sql`SELECT id, email, full_name, phone, role, username, username_confirmed, engineer_onboarding_required 
-FROM users 
-WHERE id = ${decoded.id}`;
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: "No token",
+      });
+    }
 
-    const user = users[0];
-    if (!user)
-      return res.status(401).json({ success: false, error: "User not found" });
+    const decoded = jwt.verify(token, JWT_SECRET);
 
-    const newToken = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" },
-    );
+    const [user] = await sql`
+      SELECT *
+      FROM users
+      WHERE id = ${decoded.id}
+      LIMIT 1
+    `;
 
-    res.json({ success: true, user, token: newToken });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: "User not found",
+      });
+    }
+
+    const newToken = generateToken(user);
+
+    return res.json({
+      success: true,
+      user: buildUserResponse(user),
+      token: newToken,
+    });
   } catch (error) {
-    res.status(401).json({ success: false, error: "Invalid token" });
+    return res.status(401).json({
+      success: false,
+      error: "Invalid token",
+    });
   }
 });
 
