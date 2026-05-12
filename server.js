@@ -79,6 +79,9 @@ app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
 app.use('/api', require('./routes/projectRoutes'));
+// NEW — v2 quote system
+app.use('/api/v2/quotes/requests',    require('./routes/quoteRequestsRoutes'));
+app.use('/api/v2/quotes/suggestions', require('./routes/quoteSuggestionsRoutes'));
 app.post('/api/ai/vision', 
   multer({ 
     dest: 'uploads/',
@@ -199,6 +202,9 @@ async function checkOllama() {
   }
 }
 
+// must be last middleware
+const { errorHandler } = require('./middleware/errorHandler');
+app.use(errorHandler);
 
 
 
