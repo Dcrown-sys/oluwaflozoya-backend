@@ -5,6 +5,7 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const { sql } = require('./db');
+const engineerRoutes = require("./routes/engineerRoutes");
 const path = require('path');
 
 // Controllers & routes
@@ -70,6 +71,7 @@ app.use("/api/geocode", geocodeRoutes);
 app.use('/api/courier', courierKYCRoutes);
 app.use('/api/admin', adminKYCApprovalRoutes);
 app.use('/api/auth', authRoutes);
+app.use("/api/engineer", engineerRoutes);
 app.use('/admin', adminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', require('./routes/adminOrdersRoutes'));
