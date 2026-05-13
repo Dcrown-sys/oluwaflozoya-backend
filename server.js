@@ -84,6 +84,7 @@ app.use('/api', require('./routes/projectRoutes'));
 // NEW — v2 quote system
 app.use('/api/v2/quotes/requests',    require('./routes/quoteRequestsRoutes'));
 app.use('/api/v2/quotes/suggestions', require('./routes/quoteSuggestionsRoutes'));
+app.use('/api/v2/quotes/requests/:requestId/messages', require('./routes/quoteMessagesRoutes'));
 app.post('/api/ai/vision', 
   multer({ 
     dest: 'uploads/',
