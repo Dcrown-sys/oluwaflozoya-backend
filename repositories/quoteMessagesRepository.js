@@ -38,8 +38,7 @@ const listByRequest = async (requestId, { page = 1, limit = 50 } = {}) => {
   return sql`
     SELECT
       qm.*,
-      u.full_name AS sender_name,
-      u.image     AS sender_avatar
+      u.full_name AS sender_name
     FROM quote_messages qm
     LEFT JOIN users u ON u.id = qm.sender_id
     WHERE qm.quote_request_id = ${requestId}
