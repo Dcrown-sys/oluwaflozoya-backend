@@ -3,6 +3,7 @@ require('dotenv').config();
 
 const sql = postgres(process.env.DATABASE_URL, {
   ssl: 'require',
+  prepare: false,  // ✅ ADD THIS — fixes "cached plan must not change result type"
 });
 
 // Optional test
@@ -15,4 +16,4 @@ const sql = postgres(process.env.DATABASE_URL, {
   }
 })();
 
-module.exports = { sql }; // ✅ Fix: export as { sql }
+module.exports = { sql };
