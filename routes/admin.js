@@ -194,4 +194,21 @@ router.get('/ads', getAds);
 router.post('/ads', createAd);
 router.delete('/ads/:id', deleteAd);
 
+
+// ============================
+// Engineer Withdrawals
+// ============================
+
+router.get(
+  "/engineer-withdrawals",
+  verifyAdmin,
+  adminController.getEngineerWithdrawals
+);
+
+router.patch(
+  "/engineer-withdrawals/:withdrawalId/status",
+  verifyAdmin,
+  adminController.updateEngineerWithdrawalStatus
+);
+
 module.exports = router;

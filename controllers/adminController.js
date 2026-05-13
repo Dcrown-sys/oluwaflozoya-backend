@@ -3690,6 +3690,101 @@ exports.searchProducts = async (req, res) => {
   };
 
 
+
+
+
+  // ============================================
+// ENGINEER WITHDRAWALS
+// ============================================
+
+// GET ALL ENGINEER WITHDRAWALS
+exports.getEngineerWithdrawals = async (req, res) => {
+  try {
+    const withdrawals = await sql`
+      SELECT
+        ew.id,
+        ew.engineer_id,
+        ew.amount,
+        ew.status,
+        ew.bank_name,
+        ew.account_number,
+        ew.account_name,
+        ew.created_at,
+        ew.updated_at,
+        u.full_name,
+        u.email
+      FROM engineer_withdrawals ew
+      JOIN users u
+        ON u.id = ew.engineer_id
+      ORDER BY ew.created_at DESC
+    `;
+
+    return res.status(200).json({
+      success: true,
+      withdrawals,
+    });
+  } catch (error) {
+    console.error("getEngineerWithdrawals error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch engineer withdrawals",
+    });
+  }
+};
+
+// UPDATE WITHDRAWAL STATUS FOR ENGINEERS
+exports.updateEngineerWithdrawalStatus = async (req, res) => {
+  try {
+    const { withdrawalId } = req.params;
+    const { status } = req.body;
+
+    const allowedStatuses = [
+      "under_review",
+      "approved",
+      "paid",
+      "rejected",
+    ];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid withdrawal status",
+      });
+    }
+
+    const result = await sql`
+      UPDATE engineer_withdrawals
+      SET
+        status = ${status},
+        updated_at = NOW()
+      WHERE id = ${withdrawalId}
+      RETURNING *
+    `;
+
+    if (result.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Withdrawal not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Withdrawal status updated successfully",
+      withdrawal: result[0],
+    });
+  } catch (error) {
+    console.error("updateEngineerWithdrawalStatus error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update withdrawal status",
+    });
+  }
+};
+
+
   // ✅ Confirm payment and update order status after Flutterwave callback
 // exports.confirmPayment = async (req, res) => {
 //   const { tx_ref } = req.body;
