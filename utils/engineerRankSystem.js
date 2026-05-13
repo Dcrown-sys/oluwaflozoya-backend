@@ -1,5 +1,39 @@
 const { sql } = require("../db");
 
+function getRankBenefits(rank) {
+  switch (rank) {
+    case "Diamond":
+      return {
+        multiplier: 2.0,
+        monthlyTarget: 100,
+      };
+
+    case "Platinum":
+      return {
+        multiplier: 1.5,
+        monthlyTarget: 40,
+      };
+
+    case "Gold":
+      return {
+        multiplier: 1.25,
+        monthlyTarget: 15,
+      };
+
+    case "Silver":
+      return {
+        multiplier: 1.1,
+        monthlyTarget: 5,
+      };
+
+    default:
+      return {
+        multiplier: 1.0,
+        monthlyTarget: 3,
+      };
+  }
+}
+
 function calculateRank({ totalPoints, activeReferrals }) {
   const points = Number(totalPoints || 0);
   const referrals = Number(activeReferrals || 0);
@@ -47,10 +81,14 @@ async function updateEngineerRank(userId) {
     activeReferrals: referralStats.active_referrals,
   });
 
+  const benefits = getRankBenefits(newRank);
+
   const [updatedProfile] = await sql`
     UPDATE engineer_profiles
-    SET 
+    SET
       rank = ${newRank},
+      referral_multiplier = ${benefits.multiplier},
+      monthly_referral_target = ${benefits.monthlyTarget},
       updated_at = NOW()
     WHERE user_id = ${userId}
     RETURNING *
@@ -62,4 +100,5 @@ async function updateEngineerRank(userId) {
 module.exports = {
   calculateRank,
   updateEngineerRank,
+  getRankBenefits,
 };

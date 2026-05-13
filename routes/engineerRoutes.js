@@ -11,6 +11,7 @@ const {
   requestWithdrawal,
   getEngineerAnalytics,
   getEngineerLeaderboard,
+  getReferralOverview,
 } = require("../controllers/engineerController");
 
 router.post("/onboard", verifyToken, onboardEngineer);
@@ -26,5 +27,7 @@ router.post("/withdrawals", verifyToken, requestWithdrawal);
 router.get("/analytics", verifyToken, getEngineerAnalytics);
 
 router.get("/leaderboard", verifyToken, getEngineerLeaderboard);
+
+router.get("/referrals/overview", verifyToken, getReferralOverview);
 
 module.exports = router;

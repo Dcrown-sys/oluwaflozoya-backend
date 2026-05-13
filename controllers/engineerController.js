@@ -611,3 +611,72 @@ exports.getEngineerLeaderboard = async (req, res) => {
     });
   }
 };
+
+
+exports.getReferralOverview = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [profile] = await sql`
+      SELECT
+        rank,
+        referral_multiplier,
+        monthly_referral_target,
+        lifetime_referral_earnings,
+        monthly_bonus_points
+      FROM engineer_profiles
+      WHERE user_id = ${userId}
+      LIMIT 1
+    `;
+
+    const [monthlyStats] = await sql`
+      SELECT COUNT(*) AS referrals_this_month
+      FROM engineer_referrals
+      WHERE referrer_user_id = ${userId}
+        AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', NOW())
+    `;
+
+    const [referralEarnings] = await sql`
+      SELECT
+        COALESCE(SUM(points), 0) AS total_referral_points
+      FROM engineer_points
+      WHERE user_id = ${userId}
+        AND source_type = 'referral'
+    `;
+
+    const [user] = await sql`
+      SELECT username
+      FROM users
+      WHERE id = ${userId}
+      LIMIT 1
+    `;
+
+    return res.json({
+      success: true,
+      referralOverview: {
+        referral_link: `https://zoyasupply.com/signup?ref=${user.username}`,
+        rank: profile.rank,
+        referral_multiplier: profile.referral_multiplier,
+        monthly_target: profile.monthly_referral_target,
+        referrals_this_month: Number(monthlyStats.referrals_this_month || 0),
+        target_completed:
+          Number(monthlyStats.referrals_this_month || 0) >=
+          Number(profile.monthly_referral_target || 0),
+        lifetime_referral_earnings:
+          profile.lifetime_referral_earnings,
+        monthly_bonus_points:
+          profile.monthly_bonus_points,
+        total_referral_points:
+          referralEarnings.total_referral_points,
+      },
+    });
+  } catch (error) {
+    console.error("🚨 Referral overview error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};
