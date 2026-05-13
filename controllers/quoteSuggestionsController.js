@@ -11,7 +11,8 @@ exports.search = async (req, res, next) => {
       FROM categories
       WHERE name ILIKE ${like}
       UNION ALL
-      SELECT 'product' AS type, id::text AS id, name, unit, image_url
+      SELECT 'product' AS type, id::text AS id, name,
+             unit::text AS unit, image_url::text AS image_url
       FROM products
       WHERE name ILIKE ${like}
       ORDER BY type, name
