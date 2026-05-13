@@ -3703,20 +3703,24 @@ exports.getEngineerWithdrawals = async (req, res) => {
     const withdrawals = await sql`
       SELECT
         ew.id,
-        ew.engineer_id,
+        ew.user_id,
         ew.amount,
-        ew.status,
+        ew.points_used,
         ew.bank_name,
         ew.account_number,
         ew.account_name,
-        ew.created_at,
-        ew.updated_at,
+        ew.status,
+        ew.admin_id,
+        ew.admin_note,
+        ew.requested_at,
+        ew.processed_at,
         u.full_name,
-        u.email
+        u.email,
+        u.username
       FROM engineer_withdrawals ew
       JOIN users u
-        ON u.id = ew.engineer_id
-      ORDER BY ew.created_at DESC
+        ON u.id = ew.user_id
+      ORDER BY ew.requested_at DESC
     `;
 
     return res.status(200).json({
@@ -3729,17 +3733,19 @@ exports.getEngineerWithdrawals = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch engineer withdrawals",
+      details: error.message,
     });
   }
 };
 
-// UPDATE WITHDRAWAL STATUS FOR ENGINEERS
 exports.updateEngineerWithdrawalStatus = async (req, res) => {
   try {
     const { withdrawalId } = req.params;
-    const { status } = req.body;
+    const { status, admin_note } = req.body;
+    const adminId = req.user.id;
 
     const allowedStatuses = [
+      "pending",
       "under_review",
       "approved",
       "paid",
@@ -3753,26 +3759,60 @@ exports.updateEngineerWithdrawalStatus = async (req, res) => {
       });
     }
 
-    const result = await sql`
-      UPDATE engineer_withdrawals
-      SET
-        status = ${status},
-        updated_at = NOW()
+    const [withdrawal] = await sql`
+      SELECT *
+      FROM engineer_withdrawals
       WHERE id = ${withdrawalId}
-      RETURNING *
+      LIMIT 1
     `;
 
-    if (result.length === 0) {
+    if (!withdrawal) {
       return res.status(404).json({
         success: false,
         message: "Withdrawal not found",
       });
     }
 
+    const [updatedWithdrawal] = await sql`
+      UPDATE engineer_withdrawals
+      SET
+        status = ${status},
+        admin_id = ${adminId},
+        admin_note = ${admin_note || null},
+        processed_at = CASE 
+          WHEN ${status} IN ('paid', 'rejected') THEN NOW()
+          ELSE processed_at
+        END
+      WHERE id = ${withdrawalId}
+      RETURNING *
+    `;
+
+    if (status === "paid") {
+      await sql`
+        UPDATE engineer_profiles
+        SET
+          pending_points = GREATEST(pending_points - ${withdrawal.points_used}, 0),
+          total_withdrawn = total_withdrawn + ${withdrawal.amount},
+          updated_at = NOW()
+        WHERE user_id = ${withdrawal.user_id}
+      `;
+    }
+
+    if (status === "rejected") {
+      await sql`
+        UPDATE engineer_profiles
+        SET
+          pending_points = GREATEST(pending_points - ${withdrawal.points_used}, 0),
+          available_points = available_points + ${withdrawal.points_used},
+          updated_at = NOW()
+        WHERE user_id = ${withdrawal.user_id}
+      `;
+    }
+
     return res.status(200).json({
       success: true,
       message: "Withdrawal status updated successfully",
-      withdrawal: result[0],
+      withdrawal: updatedWithdrawal,
     });
   } catch (error) {
     console.error("updateEngineerWithdrawalStatus error:", error);
@@ -3780,9 +3820,13 @@ exports.updateEngineerWithdrawalStatus = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to update withdrawal status",
+      details: error.message,
     });
   }
 };
+
+
+
 
 
   // ✅ Confirm payment and update order status after Flutterwave callback
