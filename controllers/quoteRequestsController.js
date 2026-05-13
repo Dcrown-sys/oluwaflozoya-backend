@@ -17,8 +17,13 @@ exports.create = async (req, res, next) => {
 
 exports.list = async (req, res, next) => {
   try {
-    const items = await service.listForViewer({ viewer: viewerFrom(req), query: req.query });
-    res.json({ success: true, items, page: req.query.page, limit: req.query.limit });
+    const query = {
+      status: req.query.status || null,
+      page:   parseInt(req.query.page)  || 1,
+      limit:  parseInt(req.query.limit) || 20,
+    };
+    const items = await service.listForViewer({ viewer: viewerFrom(req), query });
+    res.json({ success: true, items, page: query.page, limit: query.limit });
   } catch (err) { next(err); }
 };
 
