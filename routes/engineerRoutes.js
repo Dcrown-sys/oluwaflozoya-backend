@@ -9,6 +9,8 @@ const {
   confirmUsername,
   getEngineerWallet,
   requestWithdrawal,
+  getEngineerAnalytics,
+  getEngineerLeaderboard,
 } = require("../controllers/engineerController");
 
 router.post("/onboard", verifyToken, onboardEngineer);
@@ -20,5 +22,9 @@ router.post("/confirm-username", verifyToken, confirmUsername);
 router.get("/wallet", verifyToken, getEngineerWallet);
 
 router.post("/withdrawals", verifyToken, requestWithdrawal);
+
+router.get("/analytics", verifyToken, getEngineerAnalytics);
+
+router.get("/leaderboard", verifyToken, getEngineerLeaderboard);
 
 module.exports = router;

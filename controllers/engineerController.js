@@ -503,3 +503,111 @@ exports.requestWithdrawal = async (req, res) => {
     });
   }
 };
+
+
+exports.getEngineerAnalytics = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const monthlyPoints = await sql`
+      SELECT
+        TO_CHAR(created_at, 'YYYY-MM') AS month,
+        COALESCE(SUM(points), 0) AS total_points
+      FROM engineer_points
+      WHERE user_id = ${userId}
+      GROUP BY month
+      ORDER BY month ASC
+    `;
+
+    const sourceBreakdown = await sql`
+      SELECT
+        source_type,
+        COALESCE(SUM(points), 0) AS total_points
+      FROM engineer_points
+      WHERE user_id = ${userId}
+      GROUP BY source_type
+    `;
+
+    const monthlyWithdrawals = await sql`
+      SELECT
+        TO_CHAR(requested_at, 'YYYY-MM') AS month,
+        COALESCE(SUM(amount), 0) AS total_amount
+      FROM engineer_withdrawals
+      WHERE user_id = ${userId}
+      GROUP BY month
+      ORDER BY month ASC
+    `;
+
+    const monthlyReferrals = await sql`
+      SELECT
+        TO_CHAR(created_at, 'YYYY-MM') AS month,
+        COUNT(*) AS total_referrals
+      FROM engineer_referrals
+      WHERE referrer_user_id = ${userId}
+      GROUP BY month
+      ORDER BY month ASC
+    `;
+
+    return res.json({
+      success: true,
+      analytics: {
+        monthlyPoints,
+        sourceBreakdown,
+        monthlyWithdrawals,
+        monthlyReferrals,
+      },
+    });
+  } catch (error) {
+    console.error("🚨 Engineer analytics error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};
+
+exports.getEngineerLeaderboard = async (req, res) => {
+  try {
+    const leaderboard = await sql`
+      SELECT
+        ep.user_id,
+        u.full_name,
+        u.username,
+        ep.rank,
+        ep.total_points,
+        ep.available_points,
+        COUNT(er.id) FILTER (
+          WHERE er.status = 'active'
+        ) AS active_referrals
+      FROM engineer_profiles ep
+      JOIN users u
+        ON ep.user_id = u.id
+      LEFT JOIN engineer_referrals er
+        ON er.referrer_user_id = ep.user_id
+      GROUP BY
+        ep.user_id,
+        u.full_name,
+        u.username,
+        ep.rank,
+        ep.total_points,
+        ep.available_points
+      ORDER BY ep.total_points DESC
+      LIMIT 50
+    `;
+
+    return res.json({
+      success: true,
+      leaderboard,
+    });
+  } catch (error) {
+    console.error("🚨 Engineer leaderboard error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};
