@@ -30,7 +30,10 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { 
-    origin: '*', 
+    origin: [
+      'https://oluwaflozoya-backend.onrender.com',  // Your backend
+      '*',  // Allow all for mobile apps (or specify your app domain)
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true 
   },
