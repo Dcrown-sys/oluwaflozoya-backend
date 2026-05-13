@@ -164,6 +164,10 @@ io.on('connection', (socket) => {
     socket.leave(`quote_${requestId}`);
     console.log(`💬 Socket ${socket.id} left quote_${requestId}`);
   });
+  socket.on('join_order_room', ({ orderId }) => {
+    socket.join(`order_${orderId}`);
+    console.log(`📦 Socket ${socket.id} joined order_${orderId}`);
+  });
 
   socket.on('disconnect', () => {
     console.log('❌ Client disconnected:', socket.id);
