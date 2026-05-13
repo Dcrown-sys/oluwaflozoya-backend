@@ -30,39 +30,37 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { 
-    origin: '*', 
+    origin: [
+      'https://oluwaflozoya-backend.onrender.com',  // Your backend
+      '*',  // Allow all for mobile apps (or specify your app domain)
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     credentials: true 
   },
 });
 
-// Pass Socket.IO instance to controllers
+// ======== PASS SOCKET.IO TO CONTROLLERS ========
 adminKYCApprovalController.setSocket(io);
 adminController.initSocketIO(io);
+require('./controllers/quoteMessagesController').setSocket(io); // ✅ NEW
 
-// ======== MIDDLEWARE - FIXED CORS & LIMITS ========
+// ======== MIDDLEWARE ========
 app.use(cors({
-  origin: true,  // ✅ MOBILE FIX: Allow all origins
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'multipart/form-data']
 }));
 
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.raw({ type: 'application/json', limit: '10mb' }));
-
-
-
 
 // Request logger
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
   next();
 });
-
-
 
 // ======== ROUTES ========
 app.use('/api/payment', paymentsRoutes); // Webhook first
@@ -81,9 +79,12 @@ app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
 app.use('/api', require('./routes/projectRoutes'));
-// NEW — v2 quote system
-app.use('/api/v2/quotes/requests',    require('./routes/quoteRequestsRoutes'));
-app.use('/api/v2/quotes/suggestions', require('./routes/quoteSuggestionsRoutes'));
+
+// ── v2 quote system (specific routes first) ──
+app.use('/api/v2/quotes/requests/:requestId/messages', require('./routes/quoteMessagesRoutes'));
+app.use('/api/v2/quotes/requests',                     require('./routes/quoteRequestsRoutes'));
+app.use('/api/v2/quotes/suggestions',                  require('./routes/quoteSuggestionsRoutes'));
+
 app.post('/api/ai/vision', 
   multer({ 
     dest: 'uploads/',
@@ -92,15 +93,11 @@ app.post('/api/ai/vision',
   analyzeConstruction
 );
 
-
-// Add this route to list YOUR available models
+// List available AI models
 app.get('/list-models', async (req, res) => {
   try {
     const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-    
-    // This lists ALL models your API key can access
     const models = await genAI.listModels();
-    
     const availableModels = models.models()
       .filter(model => model.supportedGenerationMethods().includes('generateContent'))
       .map(model => ({
@@ -108,23 +105,17 @@ app.get('/list-models', async (req, res) => {
         displayName: model.displayName(),
         description: model.description()
       }));
-
-    res.json({
-      success: true,
-      availableModels: availableModels,
-      totalModels: availableModels.length
-    });
+    res.json({ success: true, availableModels, totalModels: availableModels.length });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-
-
 // ======== SOCKET.IO ========
 io.on('connection', (socket) => {
   console.log('🚗 Client connected:', socket.id);
 
+  // ── Courier location updates ──
   socket.on('locationUpdate', async (data) => {
     try {
       const { courier_id, latitude, longitude } = data;
@@ -143,6 +134,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── Notifications ──
   socket.on('sendNotification', async (data) => {
     try {
       const { user_id, message, type } = data;
@@ -159,9 +151,25 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ── User room (for personal notifications) ──
   socket.on('joinUserRoom', (user_id) => {
     socket.join(`user_${user_id}`);
     console.log(`📌 User ${user_id} joined their room`);
+  });
+
+  // ── Quote chat rooms ──✅ NEW
+  socket.on('joinQuoteRoom', (requestId) => {
+    socket.join(`quote_${requestId}`);
+    console.log(`💬 Socket ${socket.id} joined quote_${requestId}`);
+  });
+
+  socket.on('leaveQuoteRoom', (requestId) => {
+    socket.leave(`quote_${requestId}`);
+    console.log(`💬 Socket ${socket.id} left quote_${requestId}`);
+  });
+  socket.on('join_order_room', ({ orderId }) => {
+    socket.join(`order_${orderId}`);
+    console.log(`📦 Socket ${socket.id} joined order_${orderId}`);
   });
 
   socket.on('disconnect', () => {
@@ -187,7 +195,7 @@ app.get('/payment-success', (req, res) => {
   `);
 });
 
-// ======== AI INIT (KEEP AS IS) ========
+// ======== AI INIT ========
 const axios = require('axios');
 const { exec } = require('child_process');
 
@@ -204,11 +212,9 @@ async function checkOllama() {
   }
 }
 
-// must be last middleware
+// ── Error handler (must be last middleware) ──
 const { errorHandler } = require('./middleware/errorHandler');
 app.use(errorHandler);
-
-
 
 // ======== START SERVER ========
 const PORT = process.env.PORT || 5000;
@@ -220,7 +226,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   } catch (error) {
     console.error('❌ Database connection failed:', error);
   }
-  
+
   console.log('🚀 Server ready - AI loads on first request');
   console.log(`🚀 Server with Socket.IO listening on port ${PORT}`);
   console.log(`✅ Health: http://localhost:${PORT}/health`);
