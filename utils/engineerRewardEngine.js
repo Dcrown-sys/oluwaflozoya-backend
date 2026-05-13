@@ -3,6 +3,7 @@ const {
   calculatePurchasePoints,
   calculateReferralPoints,
 } = require("./engineerRewards");
+const { updateEngineerRank } = require("./engineerRankSystem");
 
 async function awardEngineerPointsForOrder(orderId) {
   const [order] = await sql`
@@ -98,6 +99,8 @@ if (!engineerProfile) {
     `;
   }
 
+  await updateEngineerRank(buyer.id);
+
   let referralReward = null;
 
   if (buyer.referred_by_user_id) {
@@ -140,6 +143,8 @@ if (!engineerProfile) {
           updated_at = NOW()
         WHERE user_id = ${buyer.referred_by_user_id}
       `;
+
+      await updateEngineerRank(buyer.referred_by_user_id);
 
       await sql`
         UPDATE engineer_referrals

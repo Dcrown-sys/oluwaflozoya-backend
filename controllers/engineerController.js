@@ -163,7 +163,7 @@ exports.onboardEngineer = async (req, res) => {
       profile = updatedProfile;
     }
 
-   const [updatedUser] = await sql`
+    const [updatedUser] = await sql`
   SELECT 
     id, 
     full_name, 
@@ -264,12 +264,36 @@ exports.getEngineerDashboard = async (req, res) => {
       WHERE user_id = ${userId}
     `;
 
+    const [activeReferralStats] = await sql`
+  SELECT COUNT(*) AS active_referrals
+  FROM engineer_referrals
+  WHERE referrer_user_id = ${userId}
+    AND status = 'active'
+`;
+
+    const rankProgress = {
+      current_rank: profile.rank,
+      total_points: Number(profile.total_points || 0),
+      active_referrals: Number(activeReferralStats.active_referrals || 0),
+      next_rank:
+        profile.rank === "Bronze"
+          ? "Silver"
+          : profile.rank === "Silver"
+            ? "Gold"
+            : profile.rank === "Gold"
+              ? "Platinum"
+              : profile.rank === "Platinum"
+                ? "Diamond"
+                : null,
+    };
+
     return res.json({
       success: true,
       dashboard: {
         user,
         profile,
         summary,
+        rankProgress,
         referrals,
         withdrawals,
         pointsHistory,
@@ -380,17 +404,13 @@ exports.requestWithdrawal = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const {
-      amount,
-      bank_name,
-      account_number,
-      account_name,
-    } = req.body;
+    const { amount, bank_name, account_number, account_name } = req.body;
 
     if (!amount || !bank_name || !account_number || !account_name) {
       return res.status(400).json({
         success: false,
-        error: "Amount, bank name, account number, and account name are required",
+        error:
+          "Amount, bank name, account number, and account name are required",
       });
     }
 
@@ -400,7 +420,9 @@ exports.requestWithdrawal = async (req, res) => {
       LIMIT 1
     `;
 
-    const minimumWithdrawal = Number(settings?.minimum_withdrawal_amount || 10000);
+    const minimumWithdrawal = Number(
+      settings?.minimum_withdrawal_amount || 10000,
+    );
     const pointToNairaRate = Number(settings?.point_to_naira_rate || 1);
 
     if (Number(amount) < minimumWithdrawal) {
@@ -468,7 +490,8 @@ exports.requestWithdrawal = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Withdrawal request submitted successfully. Payment will be processed within 7 business days after verification.",
+      message:
+        "Withdrawal request submitted successfully. Payment will be processed within 7 business days after verification.",
       withdrawal,
     });
   } catch (error) {
@@ -480,4 +503,3 @@ exports.requestWithdrawal = async (req, res) => {
     });
   }
 };
-
