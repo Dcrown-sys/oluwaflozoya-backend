@@ -163,12 +163,21 @@ exports.onboardEngineer = async (req, res) => {
       profile = updatedProfile;
     }
 
-    const [updatedUser] = await sql`
-      UPDATE users
-      SET role = 'engineer'
-      WHERE id = ${userId}
-      RETURNING id, full_name, email, phone, role, username, username_confirmed, engineer_onboarding_required, referred_by_user_id
-    `;
+   const [updatedUser] = await sql`
+  SELECT 
+    id, 
+    full_name, 
+    email, 
+    phone, 
+    role, 
+    username, 
+    username_confirmed, 
+    engineer_onboarding_required, 
+    referred_by_user_id
+  FROM users
+  WHERE id = ${userId}
+  LIMIT 1
+`;
 
     return res.json({
       success: true,

@@ -36,12 +36,19 @@ async function awardEngineerPointsForOrder(orderId) {
     throw new Error("Order buyer not found");
   }
 
-  if (buyer.role !== "engineer") {
-    return {
-      awarded: false,
-      reason: "Buyer is not an engineer",
-    };
-  }
+const [engineerProfile] = await sql`
+  SELECT id
+  FROM engineer_profiles
+  WHERE user_id = ${buyer.id}
+  LIMIT 1
+`;
+
+if (!engineerProfile) {
+  return {
+    awarded: false,
+    reason: "Buyer does not have an engineer profile",
+  };
+}
 
   const orderAmount = Number(order.total_amount || 0);
 
