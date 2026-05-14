@@ -552,14 +552,29 @@ exports.getEngineerAnalytics = async (req, res) => {
     `;
 
     return res.json({
-      success: true,
-      analytics: {
-        monthlyPoints,
-        sourceBreakdown,
-        monthlyWithdrawals,
-        monthlyReferrals,
-      },
-    });
+  success: true,
+  analytics: {
+    pointsOverTime: monthlyPoints.map((item) => ({
+      month: item.month,
+      points: Number(item.total_points || 0),
+    })),
+
+    earningsBySource: sourceBreakdown.map((item) => ({
+      source: item.source_type,
+      points: Number(item.total_points || 0),
+    })),
+
+    withdrawalsOverTime: monthlyWithdrawals.map((item) => ({
+      month: item.month,
+      amount: Number(item.total_amount || 0),
+    })),
+
+    referralsOverTime: monthlyReferrals.map((item) => ({
+      month: item.month,
+      referrals: Number(item.total_referrals || 0),
+    })),
+  },
+});
   } catch (error) {
     console.error("🚨 Engineer analytics error:", error);
 
