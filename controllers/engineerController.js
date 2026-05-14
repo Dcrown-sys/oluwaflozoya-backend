@@ -694,3 +694,36 @@ exports.getReferralOverview = async (req, res) => {
     });
   }
 };
+
+
+
+exports.getEngineerBadges = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const badges = await sql`
+      SELECT
+        id,
+        badge_key,
+        badge_name,
+        description,
+        earned_at
+      FROM engineer_badges
+      WHERE user_id = ${userId}
+      ORDER BY earned_at DESC
+    `;
+
+    return res.json({
+      success: true,
+      badges,
+    });
+  } catch (error) {
+    console.error("🚨 Engineer badges error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+};

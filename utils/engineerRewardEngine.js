@@ -5,6 +5,7 @@ const {
 } = require("./engineerRewards");
 const { updateEngineerRank } = require("./engineerRankSystem");
 const { awardMonthlyReferralBonus } = require("./engineerMonthlyBonus");
+const { evaluateEngineerBadges } = require("./engineerBadges");
 
 async function awardEngineerPointsForOrder(orderId) {
   const [order] = await sql`
@@ -104,6 +105,8 @@ async function awardEngineerPointsForOrder(orderId) {
   await updateEngineerRank(buyer.id);
 }
 
+await evaluateEngineerBadges(buyer.id);
+
   let referralReward = null;
 
   if (buyer.referred_by_user_id) {
@@ -159,6 +162,7 @@ async function awardEngineerPointsForOrder(orderId) {
 
       await updateEngineerRank(buyer.referred_by_user_id);
       await awardMonthlyReferralBonus(buyer.referred_by_user_id);
+      await evaluateEngineerBadges(buyer.referred_by_user_id);
     }
   }
 

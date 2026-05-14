@@ -12,6 +12,7 @@ const {
   getEngineerAnalytics,
   getEngineerLeaderboard,
   getReferralOverview,
+  getEngineerBadges,
 } = require("../controllers/engineerController");
 
 router.post("/onboard", verifyToken, onboardEngineer);
@@ -29,5 +30,7 @@ router.get("/analytics", verifyToken, getEngineerAnalytics);
 router.get("/leaderboard", verifyToken, getEngineerLeaderboard);
 
 router.get("/referrals/overview", verifyToken, getReferralOverview);
+
+router.get("/badges", verifyToken, getEngineerBadges);
 
 module.exports = router;
