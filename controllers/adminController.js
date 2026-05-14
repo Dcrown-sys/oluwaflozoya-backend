@@ -4114,6 +4114,161 @@ exports.updateEngineerWithdrawalStatus = async (req, res) => {
   }
 };
 
+
+// ============================================
+// ENGINEER ANALYTICS
+// ============================================
+
+exports.getEngineerAnalyticsOverview = async (req, res) => {
+  try {
+    const [engineers] = await sql`
+      SELECT COUNT(*) AS total_engineers
+      FROM engineer_profiles
+    `;
+
+    const [points] = await sql`
+      SELECT COALESCE(SUM(points), 0) AS total_points_issued
+      FROM engineer_points
+    `;
+
+    const [withdrawals] = await sql`
+      SELECT COALESCE(SUM(amount), 0) AS total_paid
+      FROM engineer_withdrawals
+      WHERE status = 'paid'
+    `;
+
+    const [pendingWithdrawals] = await sql`
+      SELECT COUNT(*) AS pending_withdrawals
+      FROM engineer_withdrawals
+      WHERE status IN ('pending', 'under_review')
+    `;
+
+    const [referrals] = await sql`
+      SELECT COUNT(*) AS total_referrals
+      FROM engineer_referrals
+    `;
+
+    return res.status(200).json({
+      success: true,
+      analytics: {
+        total_engineers: engineers.total_engineers,
+        total_points_issued: points.total_points_issued,
+        total_withdrawals_paid: withdrawals.total_paid,
+        pending_withdrawals: pendingWithdrawals.pending_withdrawals,
+        total_referrals: referrals.total_referrals,
+      },
+    });
+  } catch (error) {
+    console.error("getEngineerAnalyticsOverview error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch engineer analytics overview",
+      details: error.message,
+    });
+  }
+};
+
+exports.getTopEngineers = async (req, res) => {
+  try {
+    const engineers = await sql`
+      SELECT
+        ep.user_id,
+        u.full_name,
+        u.email,
+        u.username,
+        ep.rank,
+        ep.total_points,
+        ep.available_points,
+        ep.total_withdrawn,
+        ep.lifetime_referral_earnings
+      FROM engineer_profiles ep
+      JOIN users u
+        ON u.id = ep.user_id
+      ORDER BY ep.total_points DESC
+      LIMIT 20
+    `;
+
+    return res.status(200).json({
+      success: true,
+      engineers,
+    });
+  } catch (error) {
+    console.error("getTopEngineers error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch top engineers",
+      details: error.message,
+    });
+  }
+};
+
+exports.getMonthlyEngineerRewards = async (req, res) => {
+  try {
+    const rewards = await sql`
+      SELECT
+        TO_CHAR(created_at, 'YYYY-MM') AS month,
+        source_type,
+        COALESCE(SUM(points), 0) AS total_points
+      FROM engineer_points
+      GROUP BY month, source_type
+      ORDER BY month DESC
+    `;
+
+    return res.status(200).json({
+      success: true,
+      rewards,
+    });
+  } catch (error) {
+    console.error("getMonthlyEngineerRewards error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch monthly rewards",
+      details: error.message,
+    });
+  }
+};
+
+exports.getEngineerReferralAnalytics = async (req, res) => {
+  try {
+    const analytics = await sql`
+      SELECT
+        er.referrer_user_id,
+        u.full_name,
+        u.username,
+        COUNT(er.id) AS total_referrals,
+        COUNT(er.id) FILTER (
+          WHERE er.status = 'active'
+        ) AS active_referrals
+      FROM engineer_referrals er
+      JOIN users u
+        ON u.id = er.referrer_user_id
+      GROUP BY
+        er.referrer_user_id,
+        u.full_name,
+        u.username
+      ORDER BY active_referrals DESC
+    `;
+
+    return res.status(200).json({
+      success: true,
+      analytics,
+    });
+  } catch (error) {
+    console.error("getEngineerReferralAnalytics error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch referral analytics",
+      details: error.message,
+    });
+  }
+};
+
+
+
 // ✅ Confirm payment and update order status after Flutterwave callback
 // exports.confirmPayment = async (req, res) => {
 //   const { tx_ref } = req.body;

@@ -211,4 +211,33 @@ router.patch(
   adminController.updateEngineerWithdrawalStatus
 );
 
+
+// ============================
+// Engineer Analytics
+// ============================
+
+router.get(
+  "/engineer-analytics/overview",
+  verifyAdmin,
+  adminController.getEngineerAnalyticsOverview
+);
+
+router.get(
+  "/engineer-analytics/top-engineers",
+  verifyAdmin,
+  adminController.getTopEngineers
+);
+
+router.get(
+  "/engineer-analytics/monthly-rewards",
+  verifyAdmin,
+  adminController.getMonthlyEngineerRewards
+);
+
+router.get(
+  "/engineer-analytics/referrals",
+  verifyAdmin,
+  adminController.getEngineerReferralAnalytics
+);
+
 module.exports = router;
