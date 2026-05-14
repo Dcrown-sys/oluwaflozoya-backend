@@ -359,11 +359,15 @@ exports.getEngineerWallet = async (req, res) => {
 
     const [profile] = await sql`
       SELECT 
-        total_points,
-        available_points,
-        pending_points,
-        total_withdrawn,
-        rank
+  total_points,
+  available_points,
+  pending_points,
+  total_withdrawn,
+  rank,
+  monthly_bonus_points,
+  lifetime_referral_earnings,
+  referral_multiplier,
+  monthly_referral_target
       FROM engineer_profiles
       WHERE user_id = ${userId}
       LIMIT 1
@@ -504,7 +508,6 @@ exports.requestWithdrawal = async (req, res) => {
   }
 };
 
-
 exports.getEngineerAnalytics = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -612,7 +615,6 @@ exports.getEngineerLeaderboard = async (req, res) => {
   }
 };
 
-
 exports.getReferralOverview = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -662,12 +664,9 @@ exports.getReferralOverview = async (req, res) => {
         target_completed:
           Number(monthlyStats.referrals_this_month || 0) >=
           Number(profile.monthly_referral_target || 0),
-        lifetime_referral_earnings:
-          profile.lifetime_referral_earnings,
-        monthly_bonus_points:
-          profile.monthly_bonus_points,
-        total_referral_points:
-          referralEarnings.total_referral_points,
+        lifetime_referral_earnings: profile.lifetime_referral_earnings,
+        monthly_bonus_points: profile.monthly_bonus_points,
+        total_referral_points: referralEarnings.total_referral_points,
       },
     });
   } catch (error) {
