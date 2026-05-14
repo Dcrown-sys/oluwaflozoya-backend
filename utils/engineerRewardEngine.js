@@ -4,6 +4,7 @@ const {
   calculateReferralPoints,
 } = require("./engineerRewards");
 const { updateEngineerRank } = require("./engineerRankSystem");
+const { awardMonthlyReferralBonus } = require("./engineerMonthlyBonus");
 
 async function awardEngineerPointsForOrder(orderId) {
   const [order] = await sql`
@@ -157,6 +158,7 @@ async function awardEngineerPointsForOrder(orderId) {
   `;
 
       await updateEngineerRank(buyer.referred_by_user_id);
+      await awardMonthlyReferralBonus(buyer.referred_by_user_id);
     }
   }
 
