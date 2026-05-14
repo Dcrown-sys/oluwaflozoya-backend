@@ -33,7 +33,7 @@ function generateToken(user) {
       role: user.role,
     },
     JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: "7d" },
   );
 }
 
@@ -58,11 +58,12 @@ router.post("/firebase-login", async (req, res) => {
     const {
       phone = null,
       fullName = null,
-      role = 'buyer',
+      role = "buyer",
       address = null,
       deliveryAddress = null,
       latitude = null,
       longitude = null,
+      referral_username = null,
     } = req.body;
 
     if (!firebase_uid) {
@@ -94,38 +95,73 @@ router.post("/firebase-login", async (req, res) => {
       `;
 
       user = updatedUser;
+    }
+let referredByUserId = null;
+
+const defaultReferralUsername = "ZOYA-VICTORER5137";
+const finalReferralUsername = referral_username || defaultReferralUsername;
+
+const [referrer] = await sql`
+  SELECT id
+  FROM users
+  WHERE username = ${finalReferralUsername}
+  LIMIT 1
+`;
+
+if (referrer) {
+  referredByUserId = referrer.id;
     } else {
       const [newUser] = await sql`
-        INSERT INTO users (
-          firebase_uid,
-          email,
-          phone,
-          role,
-          full_name,
-          address,
-          delivery_address,
-          latitude,
-          longitude,
-          status,
-          created_at
-        )
-        VALUES (
-          ${firebase_uid},
-          ${email},
-          ${phone || null},
-          ${role || "buyer"},
-          ${fullName || decodedToken.name || "User"},
-          ${address || null},
-          ${deliveryAddress || null},
-          ${latitude || null},
-          ${longitude || null},
-          'active',
-          NOW()
-        )
+INSERT INTO users (
+  firebase_uid,
+  email,
+  phone,
+  role,
+  full_name,
+  address,
+  delivery_address,
+  latitude,
+  longitude,
+  referred_by_user_id,
+  status,
+  created_at
+)
+VALUES (
+  ${firebase_uid},
+  ${email},
+  ${phone || null},
+  ${role || "buyer"},
+  ${fullName || decodedToken.name || "User"},
+  ${address || null},
+  ${deliveryAddress || null},
+  ${latitude || null},
+  ${longitude || null},
+  ${referredByUserId},
+  'active',
+  NOW()
+)
         RETURNING *
       `;
 
       user = newUser;
+
+      if (referredByUserId) {
+  await sql`
+    INSERT INTO engineer_referrals (
+      referrer_user_id,
+      referred_user_id,
+      status,
+      created_at
+    )
+    VALUES (
+      ${referredByUserId},
+      ${user.id},
+      'pending',
+      NOW()
+    )
+    ON CONFLICT DO NOTHING
+  `;
+}
     }
 
     if (user.role === "courier") {

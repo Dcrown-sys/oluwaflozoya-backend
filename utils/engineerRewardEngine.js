@@ -37,19 +37,19 @@ async function awardEngineerPointsForOrder(orderId) {
     throw new Error("Order buyer not found");
   }
 
-const [engineerProfile] = await sql`
+  const [engineerProfile] = await sql`
   SELECT id
   FROM engineer_profiles
   WHERE user_id = ${buyer.id}
   LIMIT 1
 `;
 
-if (!engineerProfile) {
-  return {
-    awarded: false,
-    reason: "Buyer does not have an engineer profile",
-  };
-}
+  if (!engineerProfile) {
+    return {
+      awarded: false,
+      reason: "Buyer does not have an engineer profile",
+    };
+  }
 
   const orderAmount = Number(order.total_amount || 0);
 
@@ -99,7 +99,9 @@ if (!engineerProfile) {
     `;
   }
 
+  if (purchaseReward) {
   await updateEngineerRank(buyer.id);
+}
 
   let referralReward = null;
 
@@ -136,24 +138,25 @@ if (!engineerProfile) {
 
     if (referralReward) {
       await sql`
-        UPDATE engineer_profiles
-        SET
-          total_points = total_points + ${referralPoints},
-          available_points = available_points + ${referralPoints},
-          updated_at = NOW()
-        WHERE user_id = ${buyer.referred_by_user_id}
-      `;
-
-      await updateEngineerRank(buyer.referred_by_user_id);
+    UPDATE engineer_profiles
+    SET
+      total_points = total_points + ${referralPoints},
+      available_points = available_points + ${referralPoints},
+      lifetime_referral_earnings = lifetime_referral_earnings + ${referralPoints},
+      updated_at = NOW()
+    WHERE user_id = ${buyer.referred_by_user_id}
+  `;
 
       await sql`
-        UPDATE engineer_referrals
-        SET
-          status = 'active',
-          first_purchase_order_id = COALESCE(first_purchase_order_id, ${order.id})
-        WHERE referred_user_id = ${buyer.id}
-          AND referrer_user_id = ${buyer.referred_by_user_id}
-      `;
+    UPDATE engineer_referrals
+    SET
+      status = 'active',
+      first_purchase_order_id = COALESCE(first_purchase_order_id, ${order.id})
+    WHERE referred_user_id = ${buyer.id}
+      AND referrer_user_id = ${buyer.referred_by_user_id}
+  `;
+
+      await updateEngineerRank(buyer.referred_by_user_id);
     }
   }
 
