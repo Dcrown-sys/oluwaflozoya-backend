@@ -240,4 +240,21 @@ router.get(
   adminController.getEngineerReferralAnalytics
 );
 
+
+// ============================
+// Engineer Reward Settings
+// ============================
+
+router.get(
+  "/engineer-reward-settings",
+  verifyAdmin,
+  adminController.getEngineerRewardSettings
+);
+
+router.patch(
+  "/engineer-reward-settings",
+  verifyAdmin,
+  adminController.updateEngineerRewardSettings
+);
+
 module.exports = router;

@@ -4268,6 +4268,69 @@ exports.getEngineerReferralAnalytics = async (req, res) => {
 };
 
 
+exports.getEngineerRewardSettings = async (req, res) => {
+  try {
+    const [settings] = await sql`
+      SELECT *
+      FROM engineer_reward_settings
+      LIMIT 1
+    `;
+
+    return res.json({
+      success: true,
+      settings,
+    });
+  } catch (error) {
+    console.error("getEngineerRewardSettings error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch reward settings",
+      details: error.message,
+    });
+  }
+};
+
+exports.updateEngineerRewardSettings = async (req, res) => {
+  try {
+    const {
+      purchase_reward_percentage,
+      referral_reward_percentage,
+      minimum_withdrawal_amount,
+      point_to_naira_rate,
+      silver_target,
+      gold_target,
+      platinum_target,
+    } = req.body;
+
+    const [settings] = await sql`
+      UPDATE engineer_reward_settings
+      SET
+        purchase_reward_percentage = COALESCE(${purchase_reward_percentage || null}, purchase_reward_percentage),
+        referral_reward_percentage = COALESCE(${referral_reward_percentage || null}, referral_reward_percentage),
+        minimum_withdrawal_amount = COALESCE(${minimum_withdrawal_amount || null}, minimum_withdrawal_amount),
+        point_to_naira_rate = COALESCE(${point_to_naira_rate || null}, point_to_naira_rate),
+        silver_target = COALESCE(${silver_target || null}, silver_target),
+        gold_target = COALESCE(${gold_target || null}, gold_target),
+        platinum_target = COALESCE(${platinum_target || null}, platinum_target),
+        updated_at = NOW()
+      RETURNING *
+    `;
+
+    return res.json({
+      success: true,
+      message: "Reward settings updated successfully",
+      settings,
+    });
+  } catch (error) {
+    console.error("updateEngineerRewardSettings error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update reward settings",
+      details: error.message,
+    });
+  }
+};
+
 
 // ✅ Confirm payment and update order status after Flutterwave callback
 // exports.confirmPayment = async (req, res) => {
