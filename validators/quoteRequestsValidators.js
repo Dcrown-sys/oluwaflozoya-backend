@@ -31,7 +31,7 @@ const listQuoteRequestsSchema = z.object({
 });
 
 const updateQuoteRequestSchema = z.object({
-  status:            z.enum(['closed']).optional(),
+  status: z.enum(['open','quoted','negotiating','accepted','rejected','expired','closed']).optional(),
   assigned_admin_id: z.string().uuid().optional(),
 });
 
