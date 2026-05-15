@@ -319,7 +319,7 @@ const getZoyaConstructionPrices = async (projectType = 'building') => {
         LOWER(name)        LIKE '%plaster%'   OR
         LOWER(name)        LIKE '%waterproof%' OR
         LOWER(type)        LIKE '%construction%' OR
-        LOWER(category)    LIKE '%building%'  OR
+
         LOWER(description) LIKE '%construction%'
       )
       AND price > 0
@@ -350,7 +350,7 @@ const getZoyaConstructionPrices = async (projectType = 'building') => {
           price:       Number(row.price),
           unit:        row.unit        || 'unit',
           producer:    row.producer    || 'Zoya',
-          category:    row.category    || row.type || 'general',
+          category:    row.type || 'general',
           description: (row.description || '').substring(0, 120),
           source:      'zoya_database',
         };
