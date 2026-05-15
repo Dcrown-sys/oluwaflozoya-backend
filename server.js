@@ -23,6 +23,8 @@ const courierSwitchRoutes = require('./routes/courierSwitchRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const multer = require('multer');
 const { analyzeConstruction } = require('./src/ai/geminiVision');
+const constructionRoutes = require('./routes/Constructionroutes');
+
 
 const projectRoutes = require('./routes/projectRoutes');
 
@@ -79,6 +81,7 @@ app.use("/api/courier-switch", courierSwitchRoutes);
 app.use('/api/order', orderRoutes);
 app.use('/api/categories', require('./routes/categoryRouter'));
 app.use('/api', require('./routes/projectRoutes'));
+app.use('/api/construction', constructionRoutes);
 
 // ── v2 quote system (specific routes first) ──
 app.use('/api/v2/quotes/requests/:requestId/messages', require('./routes/quoteMessagesRoutes'));
