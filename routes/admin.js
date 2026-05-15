@@ -119,6 +119,8 @@ router.get('/orders/user/:user_id', adminController.getOrdersByUser);
 router.get('/orders/:id', adminController.getOrderById);
 router.post('/products/toggle-featured', adminController.toggleFeatured);
 router.post('/buyer/cancel-order', adminController.cancelOrder);
+router.post('/buyer/create-payment-link', adminController.createPaymentLink);
+router.post('/buyer/create-quote-payment-link', adminController.createQuotePaymentLink);
 // routes/admin.js
 
 

@@ -2706,29 +2706,54 @@ exports.verifyPayment = async (req, res) => {
         amountNumber,
       ];
       console.log("📝 Full VALUES array for orders INSERT:", valuesArray);
+  console.log('📦 Parsed items:', items);
+
+  const safeFields = {
+    delivery_address: payment.delivery_address ?? '',
+    phone:            payment.phone ?? '',
+    name:             payment.name  ?? '',
+    email:            payment.email ?? '',
+  };
+
+  const amountNumber = Number(payment.amount) || 0;
+
+  const valuesArray = [
+    payment.user_id, 'paid',
+    safeFields.delivery_address, safeFields.phone,
+    safeFields.name, safeFields.email,
+    tx_ref, amountNumber,
+  ];
+  console.log('📝 Full VALUES array for orders INSERT:', valuesArray);
 
       await sql.begin(async (tx) => {
         const [newOrder] = await tx`
       INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
       VALUES (
-        ${payment.user_id}, 
-        'paid', 
-        ${safeFields.delivery_address}, 
-        ${safeFields.phone}, 
-        ${safeFields.name}, 
-        ${safeFields.email}, 
-        ${tx_ref}, 
+        ${payment.user_id},
+        'paid',
+        ${safeFields.delivery_address},
+        ${safeFields.phone},
+        ${safeFields.name},
+        ${safeFields.email},
+        ${tx_ref},
         ${amountNumber}
       )
       RETURNING id
     `;
 
+<<<<<<< HEAD
         for (const item of items) {
           console.log("🔍 Processing item:", item); // Log each item
           const [product] =
             await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
           if (!product)
             throw new Error(`Product not found: ${item.product_id}`);
+=======
+    for (const item of items) {
+      console.log('🔍 Processing item:', item);
+      const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
+      if (!product) throw new Error(`Product not found: ${item.product_id}`);
+>>>>>>> 8e3b254582dbc3d41220d41cb1af177a55aab812
 
           const itemTotal = Number(product.price) * Number(item.quantity);
           await tx`
@@ -2737,6 +2762,7 @@ exports.verifyPayment = async (req, res) => {
       `;
         }
 
+<<<<<<< HEAD
         // Send notification
         await exports.createNotification({
           userId: payment.user_id,
@@ -2746,6 +2772,76 @@ exports.verifyPayment = async (req, res) => {
         });
       });
     }
+=======
+    await exports.createNotification({
+      userId: payment.user_id,
+      title:  'Order Placed Successfully',
+      body:   `Your order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
+      data:   { order_id: newOrder.id },
+    });
+  });
+
+// ✅ NEW — handle quote orders (free-text items, no product_id lookup)
+} else if (newStatus === 'completed' && payment.payment_type === 'quote_order') {
+  const items = JSON.parse(payment.items || '[]');
+  if (!items?.length) throw new Error('No items found for quote order creation');
+
+  console.log('📦 Quote order items:', items);
+
+  const safeFields = {
+    delivery_address: payment.delivery_address ?? '',
+    phone:            payment.phone ?? '',
+    name:             payment.name  ?? '',
+    email:            payment.email ?? '',
+  };
+
+  const amountNumber = Number(payment.amount) || 0;
+
+  await sql.begin(async (tx) => {
+    const [newOrder] = await tx`
+      INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
+      VALUES (
+        ${payment.user_id},
+        'paid',
+        ${safeFields.delivery_address},
+        ${safeFields.phone},
+        ${safeFields.name},
+        ${safeFields.email},
+        ${tx_ref},
+        ${amountNumber}
+      )
+      RETURNING id
+    `;
+
+    for (const item of items) {
+      console.log('🔍 Processing quote item:', item);
+      const qty        = Number(item.qty        ?? item.quantity  ?? 1);
+      const unitPrice  = Number(item.unit_price ?? 0);
+      const itemTotal  = unitPrice * qty;
+      const itemName   = item.product_name || item.product_name_text || 'Material';
+
+      await tx`
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, notes)
+        VALUES (
+          ${newOrder.id},
+          NULL,
+          ${qty},
+          ${unitPrice},
+          ${itemTotal},
+          ${itemName}
+        )
+      `;
+    }
+
+    await exports.createNotification({
+      userId: payment.user_id,
+      title:  'Quote Order Placed!',
+      body:   `Your quote order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
+      data:   { order_id: newOrder.id },
+    });
+  });
+}
+>>>>>>> 8e3b254582dbc3d41220d41cb1af177a55aab812
 
     return res.status(200).json({ success: true, status: newStatus, payment });
   } catch (err) {
@@ -4332,6 +4428,103 @@ exports.updateEngineerRewardSettings = async (req, res) => {
 };
 
 
+
+  // ✅ Quote Payment Link
+// POST /api/admin/buyer/create-quote-payment-link
+// ============================
+exports.createQuotePaymentLink = async (req, res) => {
+  try {
+    const {
+      user_id,
+      quote_request_id,
+      items,
+      email,
+      name,
+      phone,
+      delivery_address,
+    } = req.body;
+ 
+    if (!user_id)                                 return res.status(400).json({ error: 'user_id is required' });
+    if (!quote_request_id)                        return res.status(400).json({ error: 'quote_request_id is required' });
+    if (!Array.isArray(items) || !items.length)   return res.status(400).json({ error: 'items array is required' });
+ 
+    // Calculate total from agreed prices — no product DB lookup needed
+    let subtotal = 0;
+    for (const item of items) {
+      const unitPrice = Number(item.unit_price ?? 0);
+      const qty       = Number(item.qty ?? 1);
+      if (unitPrice <= 0) return res.status(400).json({ error: `Invalid unit_price for: ${item.product_name}` });
+      subtotal += unitPrice * qty;
+    }
+ 
+    const vat    = Math.round(subtotal * 0.075);
+    const appFee = Math.round(items.length * 1000);
+    const total  = Math.round(subtotal + vat + appFee);
+ 
+    const tx_ref = `quote-${Date.now()}-${quote_request_id}`;
+ 
+    // Create Flutterwave payment link
+    const fwRes = await axios.post(
+      'https://api.flutterwave.com/v3/payments',
+      {
+        tx_ref,
+        amount:       total,
+        currency:     'NGN',
+        redirect_url: 'oluwoflomobile://payment-success',
+        customer: {
+          email:       email || 'zoyaprocurementcompany@gmail.com',
+          name:        name  || 'Valued Customer',
+          phonenumber: phone || '08000000000',
+        },
+        customizations: {
+          title:       'Zoya Quote Order Payment',
+          description: `Payment for quote — ${items.length} item(s)`,
+        },
+      },
+      { headers: { Authorization: `Bearer ${FLW_SECRET_KEY}`, 'Content-Type': 'application/json' } }
+    );
+ 
+    if (!fwRes.data || fwRes.data.status !== 'success') {
+      return res.status(400).json({ error: fwRes.data?.message || 'Failed to create payment link' });
+    }
+ 
+    // Save to payments table
+    const paymentId = uuidv4();
+    await sql`
+      INSERT INTO payments (
+        id, user_id, amount, status, tx_ref,
+        payment_type, items, delivery_address,
+        phone, name, email, created_at
+      ) VALUES (
+        ${paymentId}, ${user_id}, ${total}, 'pending', ${tx_ref},
+        'quote_order', ${JSON.stringify(items)}, ${delivery_address || ''},
+        ${phone || ''}, ${name || ''}, ${email || ''}, NOW()
+      )
+    `;
+ 
+    // Mark quote as accepted
+    try {
+      await sql`
+        UPDATE quote_requests SET status = 'accepted', updated_at = NOW()
+        WHERE id = ${quote_request_id}
+      `;
+    } catch (_) {}
+ 
+    return res.status(200).json({
+      success:      true,
+      payment_url:  fwRes.data.data.link,
+      tx_ref,
+      total_amount: total,
+      breakdown:    { subtotal, vat, app_fee: appFee, total },
+    });
+ 
+  } catch (err) {
+    console.error('❌ createQuotePaymentLink error:', err.message);
+    return res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+}; 
+
+
 exports.flagUserAccount = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -4369,47 +4562,3 @@ exports.flagUserAccount = async (req, res) => {
     });
   }
 };
-
-
-// ✅ Confirm payment and update order status after Flutterwave callback
-// exports.confirmPayment = async (req, res) => {
-//   const { tx_ref } = req.body;
-//   const token = req.headers.authorization?.split(' ')[1];
-//   if (!tx_ref) {
-//     return res.status(400).json({ message: 'Transaction reference missing' });
-//   }
-
-//   try {
-//     // Verify payment on Flutterwave
-//     const verifyRes = await fetch(`https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`, {
-//       headers: {
-//         Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
-//       },
-//     });
-
-//     const data = await verifyRes.json();
-
-//     if (!data?.data || data.data.status !== 'successful') {
-//       return res.status(400).json({ message: 'Payment not successful or invalid reference' });
-//     }
-
-//     // ✅ Update the order in DB
-//     await prisma.orders.updateMany({
-//       where: { tx_ref },
-//       data: {
-//         payment_status: 'paid',
-//         order_status: 'pending_assignment', // waiting for courier
-//         updated_at: new Date(),
-//       },
-//     });
-
-// ✅ Optionally, auto-assign courier if you want immediate dispatch
-// const order = await prisma.orders.findFirst({ where: { tx_ref } });
-// if (order) await assignCourierAutomatically(order);
-
-//     return res.json({ message: 'Payment verified and order updated successfully' });
-//   } catch (error) {
-//     console.error('❌ confirmPayment error:', error);
-//     return res.status(500).json({ message: 'Error verifying payment', error: error.message });
-//   }
-// };

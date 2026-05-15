@@ -13,47 +13,31 @@ exports.assignCourier = async (req, res) => {
       });
     }
 
-    // 1️⃣ Verify order exists
     const [order] = await sql`
       SELECT id, user_id, status FROM orders WHERE id = ${order_id};
     `;
     if (!order)
       return res.status(404).json({ success: false, message: 'Order not found' });
 
-    // 2️⃣ Generate payment reference for delivery
     const tx_ref = `DELIVERY-${order_id}-${Date.now()}`;
 
-    // 3️⃣ Create Flutterwave payment link for delivery fee
     const fwPayload = {
-        tx_ref,
-        amount: delivery_fee,
-        currency: 'NGN',
-        redirect_url: `${process.env.FRONTEND_URL}/payment-success`,
-        customer: {
-          id: order.user_id,
-          email: 'buyer@email.com', // Replace with actual user email
-        },
-        meta: {
-          order_id,
-          courier_id, // 👈 include selected courier
-          type: 'delivery',
-        },
-      };
-      
+      tx_ref,
+      amount: delivery_fee,
+      currency: 'NGN',
+      redirect_url: `${process.env.FRONTEND_URL}/payment-success`,
+      customer: { id: order.user_id, email: 'buyer@email.com' },
+      meta: { order_id, courier_id, type: 'delivery' },
+    };
 
     const flwResponse = await flutterwave.createPaymentLink(fwPayload);
-
     if (!flwResponse || !flwResponse.data?.link) {
       console.error('❌ Flutterwave link error:', flwResponse);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to create delivery payment link',
-      });
+      return res.status(500).json({ success: false, message: 'Failed to create delivery payment link' });
     }
 
     const paymentLink = flwResponse.data.link;
 
-    // 4️⃣ Insert record into payments table
     await sql`
       INSERT INTO payments (
         order_id, user_id, amount, status,
@@ -67,7 +51,6 @@ exports.assignCourier = async (req, res) => {
       );
     `;
 
-    // 5️⃣ Update order with courier info and delivery status
     await sql`
       UPDATE orders
       SET courier_id = ${courier_id},
@@ -79,7 +62,6 @@ exports.assignCourier = async (req, res) => {
       WHERE id = ${order_id};
     `;
 
-    // 6️⃣ Respond with payment link and tx_ref
     res.status(200).json({
       success: true,
       message: 'Delivery payment link created successfully',
@@ -88,87 +70,186 @@ exports.assignCourier = async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Error assigning courier:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Internal server error assigning courier',
-    });
+    res.status(500).json({ success: false, message: 'Internal server error assigning courier' });
   }
 };
 
 
-// ✅ GET ORDER DETAILS (shows courier + delivery info)
-// ✅ GET ORDER DETAILS (shows courier info as soon as assigned)
+// ✅ GET ORDER DETAILS
 exports.getOrderDetails = async (req, res) => {
-    const { order_id } = req.params;
-  
-    if (!order_id) {
-      return res.status(400).json({
-        success: false,
-        message: 'order_id is required',
-      });
+  const { order_id } = req.params;
+
+  if (!order_id) {
+    return res.status(400).json({ success: false, message: 'order_id is required' });
+  }
+
+  try {
+    // 1️⃣ Order
+    const [order] = await sql`
+      SELECT
+        o.id            AS order_id,
+        o.user_id,
+        o.status        AS order_status,
+        o.total_amount,
+        o.pickup_address  AS order_pickup_address,
+        o.delivery_address AS order_dropoff_address,
+        o.delivery_fee,
+        o.created_at,
+        o.updated_at
+      FROM orders o
+      WHERE o.id = ${order_id}
+      LIMIT 1;
+    `;
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: 'Order not found' });
     }
-  
-    try {
-      // 1️⃣ Fetch order info
-      const [order] = await sql`
-        SELECT 
-          o.id,
-          o.user_id,
-          o.status AS order_status,
-          o.total_amount,
-          o.pickup_address AS order_pickup_address,
-          o.delivery_address AS order_delivery_address,
-          o.delivery_fee,
-          o.created_at,
-          o.updated_at
-        FROM orders o
-        WHERE o.id = ${order_id}
+
+    // 2️⃣ Delivery — prefer the row that has addresses populated (non-null pickup_address)
+    //    ORDER BY pickup_address NULLS LAST ensures the row with data comes first
+    const [delivery] = await sql`
+      SELECT
+        d.id                  AS delivery_id,
+        d.order_id,
+        d.courier_id,
+        d.status              AS delivery_status,
+        d.pickup_address,
+        d.pickup_latitude,
+        d.pickup_longitude,
+        d.dropoff_address,
+        d.dropoff_latitude,
+        d.dropoff_longitude,
+        d.delivery_fee,
+        d.distance_km,
+        d.eta,
+        d.eta_minutes,
+        d.last_location,
+        d.assigned_at,
+        d.picked_up_at,
+        d.delivered_at,
+        d.created_at          AS delivery_created_at,
+        d.updated_at          AS delivery_updated_at
+      FROM deliveries d
+      WHERE d.order_id = ${order_id}
+      ORDER BY
+        -- Prioritise rows that actually have address data
+        CASE WHEN d.pickup_address IS NOT NULL AND d.pickup_address != '' THEN 0 ELSE 1 END ASC,
+        d.created_at ASC
+      LIMIT 1;
+    `;
+
+    // 3️⃣ Payment status from payments table
+    const [payment] = await sql`
+      SELECT status AS payment_status, amount AS payment_amount
+      FROM payments
+      WHERE order_id = ${order_id}
+        AND payment_type = 'delivery'
+      ORDER BY created_at DESC
+      LIMIT 1;
+    `;
+
+    // 4️⃣ Courier info
+    let courierInfo = null;
+    if (delivery?.courier_id) {
+      const [courier] = await sql`
+        SELECT id, full_name, phone, vehicle_type, vehicle_plate
+        FROM couriers
+        WHERE user_id = ${delivery.courier_id}
         LIMIT 1;
       `;
-  
-      if (!order) {
-        return res.status(404).json({
-          success: false,
-          message: 'Order not found',
-        });
-      }
-  
-      // 2️⃣ Fetch delivery info
-      const [delivery] = await sql`
-        SELECT *
-        FROM deliveries
-        WHERE order_id = ${order_id}
-        LIMIT 1;
-      `;
-  
-      let courierInfo = null;
-  
-      // 🧩 Show courier info as soon as courier_id exists
-      if (delivery && delivery.courier_id) {
-        const [courier] = await sql`
-          SELECT id, full_name, phone, vehicle_type, vehicle_plate
-          FROM couriers
-          WHERE user_id = ${delivery.courier_id}
-          LIMIT 1;
-        `;
-        courierInfo = courier || null;
-      }
-  
-      res.json({
-        success: true,
-        message: 'Order details retrieved successfully',
-        order: {
-          ...order,
-          delivery: delivery || null,
-          courier: courierInfo,
-        },
-      });
-    } catch (err) {
-      console.error('❌ Error fetching order details:', err);
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error fetching order details',
-      });
+      courierInfo = courier || null;
     }
-  };
-  
+
+    // 5️⃣ Order items
+    const items = await sql`
+      SELECT
+        oi.id             AS order_item_id,
+        oi.product_id,
+        oi.quantity,
+        oi.unit_price,
+        oi.total_price,
+        p.name            AS product_name,
+        p.description     AS product_description,
+        p.image_url       AS product_image
+      FROM order_items oi
+      LEFT JOIN products p ON p.id = oi.product_id
+      WHERE oi.order_id = ${order_id};
+    `;
+
+    // 6️⃣ Parse courier last_location JSON → lat/lng
+    let courierLat = null;
+    let courierLng = null;
+    if (delivery?.last_location) {
+      try {
+        const loc = typeof delivery.last_location === 'string'
+          ? JSON.parse(delivery.last_location)
+          : delivery.last_location;
+        courierLat = loc?.lat ?? loc?.latitude ?? null;
+        courierLng = loc?.lng ?? loc?.longitude ?? null;
+      } catch (_) {}
+    }
+
+    // 7️⃣ Resolve addresses — prefer deliveries row, fall back to orders columns
+    const pickupAddress  = (delivery?.pickup_address  && delivery.pickup_address  !== '')
+      ? delivery.pickup_address
+      : (order.order_pickup_address || null);
+
+    const dropoffAddress = (delivery?.dropoff_address && delivery.dropoff_address !== '')
+      ? delivery.dropoff_address
+      : (order.order_dropoff_address || null);
+
+    res.json({
+      success: true,
+      message: 'Order details retrieved successfully',
+      order: {
+        order_id:       order.order_id,
+        user_id:        order.user_id,
+        order_status:   order.order_status,
+        total_amount:   order.total_amount,
+        created_at:     order.created_at,
+        updated_at:     order.updated_at,
+
+        delivery_id:          delivery?.delivery_id         || null,
+        delivery_status:      delivery?.delivery_status     || null,
+        delivery_fee:         delivery?.delivery_fee        || order.delivery_fee,
+        distance_km:          delivery?.distance_km         || null,
+        eta:                  delivery?.eta                 || null,
+        eta_minutes:          delivery?.eta_minutes         || null,
+        assigned_at:          delivery?.assigned_at         || null,
+        picked_up_at:         delivery?.picked_up_at        || null,
+        delivered_at:         delivery?.delivered_at        || null,
+        delivery_created_at:  delivery?.delivery_created_at || null,
+        delivery_updated_at:  delivery?.delivery_updated_at || null,
+
+        payment_status: payment?.payment_status || null,
+        payment_amount: payment?.payment_amount || null,
+
+        // ✅ Addresses — resolved with fallback
+        pickup_address:  pickupAddress,
+        dropoff_address: dropoffAddress,
+
+        // Coordinates (if populated)
+        pickup_lat:  delivery?.pickup_latitude   || null,
+        pickup_lng:  delivery?.pickup_longitude  || null,
+        dropoff_lat: delivery?.dropoff_latitude  || null,
+        dropoff_lng: delivery?.dropoff_longitude || null,
+
+        // Live courier location
+        courier_lat: courierLat,
+        courier_lng: courierLng,
+
+        // Courier identity
+        courier_id:    delivery?.courier_id      || null,
+        courier_name:  courierInfo?.full_name    || null,
+        courier_phone: courierInfo?.phone        || null,
+        vehicle_type:  courierInfo?.vehicle_type || null,
+        vehicle_plate: courierInfo?.vehicle_plate || null,
+
+        items: items || [],
+      },
+    });
+  } catch (err) {
+    console.error('❌ Error fetching order details:', err);
+    res.status(500).json({ success: false, message: 'Internal server error fetching order details' });
+  }
+};
