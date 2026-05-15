@@ -332,7 +332,7 @@ const analyzeConstruction = async (req, res) => {
         : isModelError
         ? 'AI model configuration error. Please contact support.'
         : 'Zoya Engineering AI temporarily unavailable.',
-      details: process.env.NODE_ENV === 'development' ? error.message : null,
+      details: error.message,
     });
   }
 };
