@@ -4332,6 +4332,45 @@ exports.updateEngineerRewardSettings = async (req, res) => {
 };
 
 
+exports.flagUserAccount = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { is_flagged, flag_reason } = req.body;
+
+    const [updatedUser] = await sql`
+      UPDATE users
+      SET
+        is_flagged = ${Boolean(is_flagged)},
+        flag_reason = ${flag_reason || null}
+      WHERE id = ${userId}
+      RETURNING id, full_name, email, role, is_flagged, flag_reason
+    `;
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: updatedUser.is_flagged
+        ? "User account flagged successfully"
+        : "User account unflagged successfully",
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("flagUserAccount error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update user flag status",
+      details: error.message,
+    });
+  }
+};
+
+
 // ✅ Confirm payment and update order status after Flutterwave callback
 // exports.confirmPayment = async (req, res) => {
 //   const { tx_ref } = req.body;

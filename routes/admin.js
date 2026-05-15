@@ -257,4 +257,14 @@ router.patch(
   adminController.updateEngineerRewardSettings
 );
 
+// ============================
+// User Fraud / Flag Controls
+// ============================
+
+router.patch(
+  "/users/:userId/flag",
+  verifyAdmin,
+  adminController.flagUserAccount
+);
+
 module.exports = router;

@@ -408,6 +408,20 @@ exports.requestWithdrawal = async (req, res) => {
   try {
     const userId = req.user.id;
 
+    const [currentUser] = await sql`
+  SELECT is_flagged, flag_reason
+  FROM users
+  WHERE id = ${userId}
+  LIMIT 1
+`;
+
+if (currentUser?.is_flagged) {
+  return res.status(403).json({
+    success: false,
+    error: `Withdrawal blocked. Account flagged: ${currentUser.flag_reason || "Under review"}`,
+  });
+}
+
     const { amount, bank_name, account_number, account_name } = req.body;
 
     if (!amount || !bank_name || !account_number || !account_name) {
