@@ -2622,68 +2622,96 @@ exports.initiatePayment = async (req, res) => {
 };
 
 // ============================
-// ✅ 2. Verify Payment (Manual)
-// ============================
-// ============================
-// ✅ 2. Verify Payment (Manual)
+// ✅ Verify Payment (Manual)
 // ============================
 exports.verifyPayment = async (req, res) => {
   try {
     const { tx_ref } = req.query;
-    if (!tx_ref) return res.status(400).json({ message: "tx_ref is required" });
+
+    if (!tx_ref) {
+      return res.status(400).json({
+        message: "tx_ref is required",
+      });
+    }
 
     console.log("🔍 Verifying payment for tx_ref:", tx_ref);
 
     // 1️⃣ Find payment
-    const [payment] =
-      await sql`SELECT * FROM payments WHERE tx_ref = ${tx_ref}`;
-    if (!payment) return res.status(404).json({ message: "Payment not found" });
+    const [payment] = await sql`
+      SELECT * FROM payments WHERE tx_ref = ${tx_ref}
+    `;
 
-    console.log("📋 Full payment record:", payment); // Log the entire payment object
+    if (!payment) {
+      return res.status(404).json({
+        message: "Payment not found",
+      });
+    }
 
+    console.log("📋 Full payment record:", payment);
+
+    // Already completed
     if (payment.status === "completed") {
-      return res
-        .status(200)
-        .json({ success: true, message: "Payment already verified", payment });
+      return res.status(200).json({
+        success: true,
+        message: "Payment already verified",
+        payment,
+      });
     }
 
     // 2️⃣ Verify with Flutterwave
     const response = await axios.get(
       `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${tx_ref}`,
-      { headers: { Authorization: `Bearer ${FLW_SECRET_KEY}` } },
+      {
+        headers: {
+          Authorization: `Bearer ${FLW_SECRET_KEY}`,
+        },
+      }
     );
 
     const paymentData = response.data?.data;
-    if (!paymentData) throw new Error("Invalid verification response");
+
+    if (!paymentData) {
+      throw new Error("Invalid verification response");
+    }
 
     console.log("🔄 Flutterwave status:", paymentData.status);
 
-    // 3️⃣ Map status
+    // 3️⃣ Map payment status
     const fwStatus = (paymentData.status || "").toLowerCase();
-    let newStatus = "pending";
-    if (["successful", "completed"].includes(fwStatus)) newStatus = "completed";
-    else if (["failed", "cancelled"].includes(fwStatus))
-      newStatus = "cancelled";
-    else if (fwStatus === "pending") newStatus = "pending";
-    else newStatus = "cancelled";
 
-    // 4️⃣ Update payment status
+    let newStatus = "pending";
+
+    if (["successful", "completed"].includes(fwStatus)) {
+      newStatus = "completed";
+    } else if (["failed", "cancelled"].includes(fwStatus)) {
+      newStatus = "cancelled";
+    } else {
+      newStatus = "pending";
+    }
+
+    // 4️⃣ Update payment
     await sql`
       UPDATE payments
-      SET status = ${newStatus}, updated_at = NOW()
+      SET status = ${newStatus},
+          updated_at = NOW()
       WHERE tx_ref = ${tx_ref}
     `;
 
-    // 5️⃣ Create order only if completed
-    // 5️⃣ Create order only if completed
-    if (newStatus === "completed" && payment.payment_type === "order") {
-      // Parse items from JSON string to array
+    // =========================================
+    // ✅ NORMAL PRODUCT ORDER
+    // =========================================
+    if (
+      newStatus === "completed" &&
+      payment.payment_type === "order"
+    ) {
       const items = JSON.parse(payment.items || "[]");
-      if (!items?.length) throw new Error("No items found for order creation");
 
-      console.log("📦 Parsed items:", items); // Log to confirm parsing
+      if (!items.length) {
+        throw new Error("No items found for order creation");
+      }
 
-      // Set safe defaults to handle undefined/null
+      console.log("📦 Parsed items:", items);
+
       const safeFields = {
         delivery_address: payment.delivery_address ?? "",
         phone: payment.phone ?? "",
@@ -2691,164 +2719,201 @@ exports.verifyPayment = async (req, res) => {
         email: payment.email ?? "",
       };
 
-      // Ensure amount is a number
       const amountNumber = Number(payment.amount) || 0;
 
-      // Log all VALUES for debugging
-      const valuesArray = [
-        payment.user_id,
-        "paid",
-        safeFields.delivery_address,
-        safeFields.phone,
-        safeFields.name,
-        safeFields.email,
-        tx_ref,
-        amountNumber,
-      ];
-      console.log("📝 Full VALUES array for orders INSERT:", valuesArray);
-  console.log('📦 Parsed items:', items);
-
-  const safeFields = {
-    delivery_address: payment.delivery_address ?? '',
-    phone:            payment.phone ?? '',
-    name:             payment.name  ?? '',
-    email:            payment.email ?? '',
-  };
-
-  const amountNumber = Number(payment.amount) || 0;
-
-  const valuesArray = [
-    payment.user_id, 'paid',
-    safeFields.delivery_address, safeFields.phone,
-    safeFields.name, safeFields.email,
-    tx_ref, amountNumber,
-  ];
-  console.log('📝 Full VALUES array for orders INSERT:', valuesArray);
-
       await sql.begin(async (tx) => {
+        // Create order
         const [newOrder] = await tx`
-      INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
-      VALUES (
-        ${payment.user_id},
-        'paid',
-        ${safeFields.delivery_address},
-        ${safeFields.phone},
-        ${safeFields.name},
-        ${safeFields.email},
-        ${tx_ref},
-        ${amountNumber}
-      )
-      RETURNING id
-    `;
+          INSERT INTO orders (
+            user_id,
+            status,
+            delivery_address,
+            phone_number,
+            name,
+            email,
+            payment_reference,
+            total_amount
+          )
+          VALUES (
+            ${payment.user_id},
+            'paid',
+            ${safeFields.delivery_address},
+            ${safeFields.phone},
+            ${safeFields.name},
+            ${safeFields.email},
+            ${tx_ref},
+            ${amountNumber}
+          )
+          RETURNING id
+        `;
 
-<<<<<<< HEAD
+        // Insert order items
         for (const item of items) {
-          console.log("🔍 Processing item:", item); // Log each item
-          const [product] =
-            await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
-          if (!product)
-            throw new Error(`Product not found: ${item.product_id}`);
-=======
-    for (const item of items) {
-      console.log('🔍 Processing item:', item);
-      const [product] = await tx`SELECT price FROM products WHERE id = ${item.product_id}`;
-      if (!product) throw new Error(`Product not found: ${item.product_id}`);
->>>>>>> 8e3b254582dbc3d41220d41cb1af177a55aab812
+          console.log("🔍 Processing item:", item);
 
-          const itemTotal = Number(product.price) * Number(item.quantity);
+          const [product] = await tx`
+            SELECT price
+            FROM products
+            WHERE id = ${item.product_id}
+          `;
+
+          if (!product) {
+            throw new Error(
+              `Product not found: ${item.product_id}`
+            );
+          }
+
+          const itemTotal =
+            Number(product.price) * Number(item.quantity);
+
           await tx`
-        INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price)
-        VALUES (${newOrder.id}, ${item.product_id}, ${item.quantity}, ${product.price}, ${itemTotal})
-      `;
+            INSERT INTO order_items (
+              order_id,
+              product_id,
+              quantity,
+              unit_price,
+              total_price
+            )
+            VALUES (
+              ${newOrder.id},
+              ${item.product_id},
+              ${item.quantity},
+              ${product.price},
+              ${itemTotal}
+            )
+          `;
         }
 
-<<<<<<< HEAD
-        // Send notification
+        // Notification
         await exports.createNotification({
           userId: payment.user_id,
           title: "Order Placed Successfully",
           body: `Your order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
-          data: { order_id: newOrder.id },
+          data: {
+            order_id: newOrder.id,
+          },
         });
       });
     }
-=======
-    await exports.createNotification({
-      userId: payment.user_id,
-      title:  'Order Placed Successfully',
-      body:   `Your order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
-      data:   { order_id: newOrder.id },
-    });
-  });
 
-// ✅ NEW — handle quote orders (free-text items, no product_id lookup)
-} else if (newStatus === 'completed' && payment.payment_type === 'quote_order') {
-  const items = JSON.parse(payment.items || '[]');
-  if (!items?.length) throw new Error('No items found for quote order creation');
+    // =========================================
+    // ✅ QUOTE ORDER
+    // =========================================
+    else if (
+      newStatus === "completed" &&
+      payment.payment_type === "quote_order"
+    ) {
+      const items = JSON.parse(payment.items || "[]");
 
-  console.log('📦 Quote order items:', items);
+      if (!items.length) {
+        throw new Error(
+          "No items found for quote order creation"
+        );
+      }
 
-  const safeFields = {
-    delivery_address: payment.delivery_address ?? '',
-    phone:            payment.phone ?? '',
-    name:             payment.name  ?? '',
-    email:            payment.email ?? '',
-  };
+      console.log("📦 Quote order items:", items);
 
-  const amountNumber = Number(payment.amount) || 0;
+      const safeFields = {
+        delivery_address: payment.delivery_address ?? "",
+        phone: payment.phone ?? "",
+        name: payment.name ?? "",
+        email: payment.email ?? "",
+      };
 
-  await sql.begin(async (tx) => {
-    const [newOrder] = await tx`
-      INSERT INTO orders (user_id, status, delivery_address, phone_number, name, email, payment_reference, total_amount)
-      VALUES (
-        ${payment.user_id},
-        'paid',
-        ${safeFields.delivery_address},
-        ${safeFields.phone},
-        ${safeFields.name},
-        ${safeFields.email},
-        ${tx_ref},
-        ${amountNumber}
-      )
-      RETURNING id
-    `;
+      const amountNumber = Number(payment.amount) || 0;
 
-    for (const item of items) {
-      console.log('🔍 Processing quote item:', item);
-      const qty        = Number(item.qty        ?? item.quantity  ?? 1);
-      const unitPrice  = Number(item.unit_price ?? 0);
-      const itemTotal  = unitPrice * qty;
-      const itemName   = item.product_name || item.product_name_text || 'Material';
+      await sql.begin(async (tx) => {
+        const [newOrder] = await tx`
+          INSERT INTO orders (
+            user_id,
+            status,
+            delivery_address,
+            phone_number,
+            name,
+            email,
+            payment_reference,
+            total_amount
+          )
+          VALUES (
+            ${payment.user_id},
+            'paid',
+            ${safeFields.delivery_address},
+            ${safeFields.phone},
+            ${safeFields.name},
+            ${safeFields.email},
+            ${tx_ref},
+            ${amountNumber}
+          )
+          RETURNING id
+        `;
 
-      await tx`
-        INSERT INTO order_items (order_id, product_id, quantity, unit_price, total_price, notes)
-        VALUES (
-          ${newOrder.id},
-          NULL,
-          ${qty},
-          ${unitPrice},
-          ${itemTotal},
-          ${itemName}
-        )
-      `;
+        for (const item of items) {
+          console.log("🔍 Processing quote item:", item);
+
+          const qty = Number(
+            item.qty ?? item.quantity ?? 1
+          );
+
+          const unitPrice = Number(
+            item.unit_price ?? 0
+          );
+
+          const itemTotal = unitPrice * qty;
+
+          const itemName =
+            item.product_name ||
+            item.product_name_text ||
+            "Material";
+
+          await tx`
+            INSERT INTO order_items (
+              order_id,
+              product_id,
+              quantity,
+              unit_price,
+              total_price,
+              notes
+            )
+            VALUES (
+              ${newOrder.id},
+              NULL,
+              ${qty},
+              ${unitPrice},
+              ${itemTotal},
+              ${itemName}
+            )
+          `;
+        }
+
+        await exports.createNotification({
+          userId: payment.user_id,
+          title: "Quote Order Placed!",
+          body: `Your quote order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
+          data: {
+            order_id: newOrder.id,
+          },
+        });
+      });
     }
 
-    await exports.createNotification({
-      userId: payment.user_id,
-      title:  'Quote Order Placed!',
-      body:   `Your quote order #${newOrder.id} has been placed. Total: ₦${amountNumber}. You'll receive updates soon.`,
-      data:   { order_id: newOrder.id },
+    return res.status(200).json({
+      success: true,
+      status: newStatus,
+      payment,
     });
-  });
-}
->>>>>>> 8e3b254582dbc3d41220d41cb1af177a55aab812
 
-    return res.status(200).json({ success: true, status: newStatus, payment });
   } catch (err) {
-    console.error("❌ verifyPayment error:", err.response?.data || err.message);
-    return res.status(500).json({ message: "Failed to verify payment" });
+    console.error(
+      "❌ verifyPayment error:",
+      err.response?.data || err.message
+    );
+
+    return res.status(500).json({
+      message: "Failed to verify payment",
+    });
   }
 };
+
 // ============================
 // 🏦 3. Create Virtual Account
 // ============================
