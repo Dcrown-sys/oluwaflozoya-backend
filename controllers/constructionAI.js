@@ -156,21 +156,20 @@ Return a JSON object with this EXACT structure (no markdown, pure JSON):
 
 // ── Parse structured JSON from Gemini response ───────────────
 function parseGeminiResponse(rawText) {
+  if (!rawText) return null;
+  // Try 1: direct parse (works when responseMimeType=application/json)
+  try { return JSON.parse(rawText.trim()); } catch {}
+  // Try 2: strip markdown fences
   try {
-    // Strip markdown code fences if present
-    const clean = rawText
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
+    const clean = rawText.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
     return JSON.parse(clean);
-  } catch {
-    // Fallback: extract JSON object from text
+  } catch {}
+  // Try 3: extract first { ... } block
+  try {
     const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) {
-      try { return JSON.parse(match[0]); } catch {}
-    }
-    return null;
-  }
+    if (match) return JSON.parse(match[0]);
+  } catch {}
+  return null;
 }
 
 // ── Format parsed data into human-readable report ────────────
