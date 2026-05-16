@@ -124,11 +124,11 @@ ${JSON.stringify(zoyaPrices, null, 2)}
 Return a JSON object with this EXACT structure (no markdown, pure JSON):
 {
   "executiveSummary": {
-    "totalMaterialCost": 0,
-    "totalLabourCost": 0,
-    "grandTotal": 0,
-    "durationWeeks": 0,
-    "costPerM2": 0,
+    "totalMaterialCost": null,
+    "totalLabourCost": null,
+    "grandTotal": null,
+    "durationWeeks": null,
+    "costPerM2": null,
     "confidence": "high|medium|low",
     "assumptions": []
   },
@@ -137,13 +137,13 @@ Return a JSON object with this EXACT structure (no markdown, pure JSON):
       "items": [
         { "description": "", "quantity": 0, "unit": "", "unitPrice": 0, "total": 0 }
       ],
-      "subtotal": 0
+      "subtotal": null
     },
-    "structure": { "items": [], "subtotal": 0 },
-    "roofing": { "items": [], "subtotal": 0 },
-    "finishing": { "items": [], "subtotal": 0 },
-    "electrical": { "items": [], "subtotal": 0 },
-    "plumbing": { "items": [], "subtotal": 0 }
+    "structure": { "items": [], "subtotal": null },
+    "roofing": { "items": [], "subtotal": null },
+    "finishing": { "items": [], "subtotal": null },
+    "electrical": { "items": [], "subtotal": null },
+    "plumbing": { "items": [], "subtotal": null }
   },
   "topMaterials": [
     { "name": "", "quantity": 0, "unit": "", "cost": 0, "percentOfTotal": 0 }
@@ -176,45 +176,45 @@ function parseGeminiResponse(rawText) {
 // ── Format parsed data into human-readable report ────────────
 function formatReport(parsed, quantities, specs) {
   if (!parsed) return null;
-
   const { executiveSummary, phases, topMaterials, recommendations, clarifyingQuestions, warnings } = parsed;
-  const fmt = n => `₦${Number(n || 0).toLocaleString()}`;
+  const fmtN = n => `₦${Number(n || 0).toLocaleString('en-NG')}`;
 
-  // Build phase breakdown text
+  // Auto-calculate totals from phase subtotals if AI returned zeros
+  const phaseSubtotals = Object.values(phases || {})
+    .map(p => Number(p?.subtotal || 0)).reduce((a, b) => a + b, 0);
+  const itemTotals = Object.values(phases || {})
+    .flatMap(p => (p?.items || []).map(i => Number(i?.total || 0)))
+    .reduce((a, b) => a + b, 0);
+
+  const materialCost  = Number(executiveSummary?.totalMaterialCost || 0) || phaseSubtotals || itemTotals;
+  const labourCost    = Number(executiveSummary?.totalLabourCost || 0)   || Math.round(materialCost * 0.35);
+  const grandTotal    = Number(executiveSummary?.grandTotal || 0)        || (materialCost + labourCost);
+  const costPerM2     = Number(executiveSummary?.costPerM2 || 0)         || (quantities.builtArea > 0 ? Math.round(grandTotal / quantities.builtArea) : 0);
+  const durationWeeks = Number(executiveSummary?.durationWeeks || 0)     || Math.max(12, Math.round(Math.sqrt(grandTotal / 500000)));
+
+  const patchedSummary = { ...executiveSummary, totalMaterialCost: materialCost, totalLabourCost: labourCost, grandTotal, costPerM2, durationWeeks };
+
   const phaseText = Object.entries(phases || {}).map(([phaseName, data]) => {
     if (!data?.items?.length) return null;
     const items = data.items.map(i =>
-      `  • ${i.description}: ${i.quantity} ${i.unit} @ ${fmt(i.unitPrice)} = ${fmt(i.total)}`
+      `  • ${i.description}: ${i.quantity} ${i.unit} @ ${fmtN(i.unitPrice)} = ${fmtN(i.total)}`
     ).join('\n');
-    return `▶ ${phaseName.toUpperCase()}\n${items}\n  Subtotal: ${fmt(data.subtotal)}`;
+    return `▶ ${phaseName.toUpperCase()}\n${items}\n  Subtotal: ${fmtN(data.subtotal)}`;
   }).filter(Boolean).join('\n\n');
 
   const topMaterialsText = (topMaterials || []).map(m =>
-    `  • ${m.name}: ${m.quantity} ${m.unit} — ${fmt(m.cost)} (${m.percentOfTotal}%)`
+    `  • ${m.name}: ${m.quantity} ${m.unit} — ${fmtN(m.cost)} (${m.percentOfTotal}%)`
   ).join('\n');
 
   return {
-    summary: `
-📊 ZOYA QS REPORT — ${specs.projectType.toUpperCase()}
-${'═'.repeat(50)}
-Plot: ${specs.plotLength}m × ${specs.plotWidth}m | Built Area: ${quantities.builtArea}m² | ${specs.floors} floor(s)
-
-💰 COST SUMMARY
-  Materials:  ${fmt(executiveSummary?.totalMaterialCost)}
-  Labour:     ${fmt(executiveSummary?.totalLabourCost)}
-  ──────────────────────────
-  GRAND TOTAL: ${fmt(executiveSummary?.grandTotal)}
-  Cost/m²:    ${fmt(executiveSummary?.costPerM2)}
-  Duration:   ~${executiveSummary?.durationWeeks} weeks
-  Confidence: ${executiveSummary?.confidence?.toUpperCase() || 'MEDIUM'}
-`,
-    phaseBreakdown: phaseText,
-    topMaterials: topMaterialsText,
+    summary: `📊 ZOYA QS REPORT — ${specs.projectType.toUpperCase()}\nPlot: ${specs.plotLength}m × ${specs.plotWidth}m | Built: ${quantities.builtArea}m²\nMaterials: ${fmtN(materialCost)} | Labour: ${fmtN(labourCost)}\nGRAND TOTAL: ${fmtN(grandTotal)} | ${fmtN(costPerM2)}/m² | ~${durationWeeks} weeks`,
+    phaseBreakdown:  phaseText,
+    topMaterials:    topMaterialsText,
     recommendations: (recommendations || []).map(r => `• ${r}`).join('\n'),
-    questions: clarifyingQuestions || [],
-    warnings: (warnings || []).map(w => `⚠️ ${w}`).join('\n'),
-    assumptions: (executiveSummary?.assumptions || []).map(a => `• ${a}`).join('\n'),
-    raw: parsed,
+    questions:       clarifyingQuestions || [],
+    warnings:        (warnings || []).map(w => `⚠️ ${w}`).join('\n'),
+    assumptions:     (patchedSummary.assumptions || []).map(a => `• ${a}`).join('\n'),
+    raw: { ...parsed, executiveSummary: patchedSummary },
   };
 }
 
