@@ -55,7 +55,7 @@ router.post('/callback', async (req, res) => {
     
     if (status === 'successful') {
       // Extract user_id and credits from tx_ref
-      const match = txRef.match(/AI-CREDITS-(\d+)-(\d+)/);
+      const match = tx_ref.match(/AI-CREDITS-(\d+)-(\d+)/);
       if (match) {
         const userId = match[1];
         const credits = parseInt(match[2]); // You'll need to store this in DB
