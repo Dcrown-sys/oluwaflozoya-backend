@@ -124,13 +124,13 @@ ${JSON.stringify(zoyaPrices, null, 2)}
 Return a JSON object with this EXACT structure (no markdown, pure JSON):
 {
   "executiveSummary": {
-    "totalMaterialCost": null,
-    "totalLabourCost": null,
-    "grandTotal": null,
+    "totalMaterialCost": 0, // MUST be a plain integer, NO ₦ symbol, NO commas. Example: 25000000
+    "totalLabourCost": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
+    "grandTotal": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
     "durationWeeks": null,
-    "costPerM2": null,
+    "costPerM2": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
     "confidence": "high|medium|low",
-    "assumptions": []
+    "assumptions": [] // Maximum 5 assumptions, each under 100 characters
   },
   "phases": {
     "foundation": {
