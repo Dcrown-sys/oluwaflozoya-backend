@@ -280,7 +280,21 @@ const analyzeConstruction = async (req, res) => {
     }
 
     // 6. Generate
-    const result      = await model.generateContent(parts);
+    let result;
+try {
+  result = await model.generateContent(parts);
+} catch (firstErr) {
+  if (firstErr.status === 503 || firstErr.status === 429) {
+    // Fallback to lite model
+    const fallbackModel = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash-lite',
+      generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+    });
+    result = await fallbackModel.generateContent(parts);
+  } else {
+    throw firstErr;
+  }
+}
     const rawResponse = result.response.text();
 
     // 7. Parse structured output
