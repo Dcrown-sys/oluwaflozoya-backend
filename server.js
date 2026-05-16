@@ -49,7 +49,12 @@ require('./controllers/quoteMessagesController').setSocket(io); // ✅ NEW
 
 // ======== MIDDLEWARE ========
 app.use(cors({
-  origin: true,
+  origin: [
+    "http://localhost:5173",
+    "https://zoyasupply.com",
+    "https://www.zoyasupply.com",
+    true
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'multipart/form-data']
