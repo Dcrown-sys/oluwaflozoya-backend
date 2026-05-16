@@ -124,26 +124,26 @@ ${JSON.stringify(zoyaPrices, null, 2)}
 Return a JSON object with this EXACT structure (no markdown, pure JSON):
 {
   "executiveSummary": {
-    "totalMaterialCost": 0,
-    "totalLabourCost": 0,
-    "grandTotal": 0,
-    "durationWeeks": 0,
-    "costPerM2": 0,
+    "totalMaterialCost": 0, // MUST be a plain integer, NO ₦ symbol, NO commas. Example: 25000000
+    "totalLabourCost": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
+    "grandTotal": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
+    "durationWeeks": null,
+    "costPerM2": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
     "confidence": "high|medium|low",
-    "assumptions": []
+    "assumptions": [] // Maximum 5 assumptions, each under 100 characters
   },
   "phases": {
     "foundation": {
       "items": [
         { "description": "", "quantity": 0, "unit": "", "unitPrice": 0, "total": 0 }
       ],
-      "subtotal": 0
+      "subtotal": null
     },
-    "structure": { "items": [], "subtotal": 0 },
-    "roofing": { "items": [], "subtotal": 0 },
-    "finishing": { "items": [], "subtotal": 0 },
-    "electrical": { "items": [], "subtotal": 0 },
-    "plumbing": { "items": [], "subtotal": 0 }
+    "structure": { "items": [], "subtotal": null },
+    "roofing": { "items": [], "subtotal": null },
+    "finishing": { "items": [], "subtotal": null },
+    "electrical": { "items": [], "subtotal": null },
+    "plumbing": { "items": [], "subtotal": null }
   },
   "topMaterials": [
     { "name": "", "quantity": 0, "unit": "", "cost": 0, "percentOfTotal": 0 }
@@ -156,65 +156,64 @@ Return a JSON object with this EXACT structure (no markdown, pure JSON):
 
 // ── Parse structured JSON from Gemini response ───────────────
 function parseGeminiResponse(rawText) {
+  if (!rawText) return null;
+  // Try 1: direct parse (works when responseMimeType=application/json)
+  try { return JSON.parse(rawText.trim()); } catch {}
+  // Try 2: strip markdown fences
   try {
-    // Strip markdown code fences if present
-    const clean = rawText
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
+    const clean = rawText.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
     return JSON.parse(clean);
-  } catch {
-    // Fallback: extract JSON object from text
+  } catch {}
+  // Try 3: extract first { ... } block
+  try {
     const match = rawText.match(/\{[\s\S]*\}/);
-    if (match) {
-      try { return JSON.parse(match[0]); } catch {}
-    }
-    return null;
-  }
+    if (match) return JSON.parse(match[0]);
+  } catch {}
+  return null;
 }
 
 // ── Format parsed data into human-readable report ────────────
 function formatReport(parsed, quantities, specs) {
   if (!parsed) return null;
-
   const { executiveSummary, phases, topMaterials, recommendations, clarifyingQuestions, warnings } = parsed;
-  const fmt = n => `₦${Number(n || 0).toLocaleString()}`;
+  const fmtN = n => `₦${Number(n || 0).toLocaleString('en-NG')}`;
 
-  // Build phase breakdown text
+  // Auto-calculate totals from phase subtotals if AI returned zeros
+  const phaseSubtotals = Object.values(phases || {})
+    .map(p => Number(p?.subtotal || 0)).reduce((a, b) => a + b, 0);
+  const itemTotals = Object.values(phases || {})
+    .flatMap(p => (p?.items || []).map(i => Number(i?.total || 0)))
+    .reduce((a, b) => a + b, 0);
+
+  const materialCost  = Number(executiveSummary?.totalMaterialCost || 0) || phaseSubtotals || itemTotals;
+  const labourCost    = Number(executiveSummary?.totalLabourCost || 0)   || Math.round(materialCost * 0.35);
+  const grandTotal    = Number(executiveSummary?.grandTotal || 0)        || (materialCost + labourCost);
+  const costPerM2     = Number(executiveSummary?.costPerM2 || 0)         || (quantities.builtArea > 0 ? Math.round(grandTotal / quantities.builtArea) : 0);
+  const durationWeeks = Number(executiveSummary?.durationWeeks || 0)     || Math.max(12, Math.round(Math.sqrt(grandTotal / 500000)));
+
+  const patchedSummary = { ...executiveSummary, totalMaterialCost: materialCost, totalLabourCost: labourCost, grandTotal, costPerM2, durationWeeks };
+
   const phaseText = Object.entries(phases || {}).map(([phaseName, data]) => {
     if (!data?.items?.length) return null;
     const items = data.items.map(i =>
-      `  • ${i.description}: ${i.quantity} ${i.unit} @ ${fmt(i.unitPrice)} = ${fmt(i.total)}`
+      `  • ${i.description}: ${i.quantity} ${i.unit} @ ${fmtN(i.unitPrice)} = ${fmtN(i.total)}`
     ).join('\n');
-    return `▶ ${phaseName.toUpperCase()}\n${items}\n  Subtotal: ${fmt(data.subtotal)}`;
+    return `▶ ${phaseName.toUpperCase()}\n${items}\n  Subtotal: ${fmtN(data.subtotal)}`;
   }).filter(Boolean).join('\n\n');
 
   const topMaterialsText = (topMaterials || []).map(m =>
-    `  • ${m.name}: ${m.quantity} ${m.unit} — ${fmt(m.cost)} (${m.percentOfTotal}%)`
+    `  • ${m.name}: ${m.quantity} ${m.unit} — ${fmtN(m.cost)} (${m.percentOfTotal}%)`
   ).join('\n');
 
   return {
-    summary: `
-📊 ZOYA QS REPORT — ${specs.projectType.toUpperCase()}
-${'═'.repeat(50)}
-Plot: ${specs.plotLength}m × ${specs.plotWidth}m | Built Area: ${quantities.builtArea}m² | ${specs.floors} floor(s)
-
-💰 COST SUMMARY
-  Materials:  ${fmt(executiveSummary?.totalMaterialCost)}
-  Labour:     ${fmt(executiveSummary?.totalLabourCost)}
-  ──────────────────────────
-  GRAND TOTAL: ${fmt(executiveSummary?.grandTotal)}
-  Cost/m²:    ${fmt(executiveSummary?.costPerM2)}
-  Duration:   ~${executiveSummary?.durationWeeks} weeks
-  Confidence: ${executiveSummary?.confidence?.toUpperCase() || 'MEDIUM'}
-`,
-    phaseBreakdown: phaseText,
-    topMaterials: topMaterialsText,
+    summary: `📊 ZOYA QS REPORT — ${specs.projectType.toUpperCase()}\nPlot: ${specs.plotLength}m × ${specs.plotWidth}m | Built: ${quantities.builtArea}m²\nMaterials: ${fmtN(materialCost)} | Labour: ${fmtN(labourCost)}\nGRAND TOTAL: ${fmtN(grandTotal)} | ${fmtN(costPerM2)}/m² | ~${durationWeeks} weeks`,
+    phaseBreakdown:  phaseText,
+    topMaterials:    topMaterialsText,
     recommendations: (recommendations || []).map(r => `• ${r}`).join('\n'),
-    questions: clarifyingQuestions || [],
-    warnings: (warnings || []).map(w => `⚠️ ${w}`).join('\n'),
-    assumptions: (executiveSummary?.assumptions || []).map(a => `• ${a}`).join('\n'),
-    raw: parsed,
+    questions:       clarifyingQuestions || [],
+    warnings:        (warnings || []).map(w => `⚠️ ${w}`).join('\n'),
+    assumptions:     (patchedSummary.assumptions || []).map(a => `• ${a}`).join('\n'),
+    raw: { ...parsed, executiveSummary: patchedSummary },
   };
 }
 
@@ -246,16 +245,16 @@ const analyzeConstruction = async (req, res) => {
     const systemPrompt = buildSystemPrompt(zoyaPrices, quantities, specs);
 
     // 4. Use correct Gemini model
-    // gemini-2.0-flash: fast, cost-effective, supports images
-    // gemini-2.0-flash:   slower, more accurate for complex analysis
-    const modelName = imageFile ? 'gemini-2.0-flash' : 'gemini-2.0-flash';
+    // gemini-2.5-flash: latest, fast, supports images and JSON mode
+    const modelName = 'gemini-2.5-flash';
     const model     = genAI.getGenerativeModel({
       model: modelName,
       generationConfig: {
-        temperature:     0.2,  // LOW temperature = more factual, less creative
-        topP:            0.8,
-        topK:            40,
-        maxOutputTokens: 8192,
+        temperature:      0.2,   // LOW = factual, not creative
+        topP:             0.8,
+        topK:             40,
+        maxOutputTokens:  16384,
+        responseMimeType: 'application/json', // FORCE pure JSON — no markdown backticks
       },
     });
 
@@ -284,7 +283,12 @@ const analyzeConstruction = async (req, res) => {
     const rawResponse = result.response.text();
 
     // 7. Parse structured output
-    const parsed  = parseGeminiResponse(rawResponse);
+    let parsed = parseGeminiResponse(rawResponse);
+    // If parse failed, try to extract partial JSON
+    if (!parsed) {
+      const partial = rawResponse.match(/"executiveSummary"[\s\S]*?"grandTotal":\s*(\d+)/);
+      if (partial) console.log('⚠️ Partial JSON detected — response truncated');
+    }
     const report  = formatReport(parsed, quantities, specs);
 
     // 8. Respond
@@ -332,7 +336,7 @@ const analyzeConstruction = async (req, res) => {
         : isModelError
         ? 'AI model configuration error. Please contact support.'
         : 'Zoya Engineering AI temporarily unavailable.',
-      details: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.message : null,
     });
   }
 };
@@ -347,7 +351,7 @@ const chatConstruction = async (req, res) => {
     if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-1.5-flash',
       generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
     });
 
