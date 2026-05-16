@@ -2,7 +2,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs   = require('fs');
 const path = require('path');
-const { getZoyaConstructionPrices } = require('../src/ai/priceService');
+const { getZoyaConstructionPrices } = require('./priceService');
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
@@ -121,7 +121,7 @@ Nigerian Standards Applied:
 ${JSON.stringify(zoyaPrices, null, 2)}
 
 === OUTPUT FORMAT ===
-CRITICAL: Return ONLY a raw JSON object. No markdown. No backticks. No explanation. Start your response with { and end with }. The ENTIRE response must be valid JSON. No text before or after.
+Return a JSON object with this EXACT structure (no markdown, pure JSON):
 {
   "executiveSummary": {
     "totalMaterialCost": 0,
@@ -246,16 +246,16 @@ const analyzeConstruction = async (req, res) => {
     const systemPrompt = buildSystemPrompt(zoyaPrices, quantities, specs);
 
     // 4. Use correct Gemini model
-    // gemini-2.5-flash: fast, cost-effective, supports images
-    // gemini-2.5-flash:   slower, more accurate for complex analysis
-    const modelName = imageFile ? 'gemini-2.5-flash' : 'gemini-2.5-flash';
+    // gemini-2.5-flash: latest, fast, supports images and JSON mode
+    const modelName = 'gemini-2.5-flash';
     const model     = genAI.getGenerativeModel({
       model: modelName,
       generationConfig: {
-        temperature:     0.2,  // LOW temperature = more factual, less creative
-        topP:            0.8,
-        topK:            40,
-        maxOutputTokens: 8192,
+        temperature:      0.2,   // LOW = factual, not creative
+        topP:             0.8,
+        topK:             40,
+        maxOutputTokens:  8192,
+        responseMimeType: 'application/json', // FORCE pure JSON — no markdown backticks
       },
     });
 
@@ -280,21 +280,7 @@ const analyzeConstruction = async (req, res) => {
     }
 
     // 6. Generate
-    let result;
-try {
-  result = await model.generateContent(parts);
-} catch (firstErr) {
-  if (firstErr.status === 503 || firstErr.status === 429) {
-    // Fallback to lite model
-    const fallbackModel = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-lite',
-      generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
-    });
-    result = await fallbackModel.generateContent(parts);
-  } else {
-    throw firstErr;
-  }
-}
+    const result      = await model.generateContent(parts);
     const rawResponse = result.response.text();
 
     // 7. Parse structured output
@@ -346,7 +332,7 @@ try {
         : isModelError
         ? 'AI model configuration error. Please contact support.'
         : 'Zoya Engineering AI temporarily unavailable.',
-      details: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.message : null,
     });
   }
 };
@@ -361,7 +347,7 @@ const chatConstruction = async (req, res) => {
     if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
     });
 
