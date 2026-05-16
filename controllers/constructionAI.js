@@ -2,7 +2,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs   = require('fs');
 const path = require('path');
-const { getZoyaConstructionPrices } = require('./priceService');
+const { getZoyaConstructionPrices } = require('../src/ai/priceService');
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
