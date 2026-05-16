@@ -121,7 +121,7 @@ Nigerian Standards Applied:
 ${JSON.stringify(zoyaPrices, null, 2)}
 
 === OUTPUT FORMAT ===
-Return a JSON object with this EXACT structure (no markdown, pure JSON):
+CRITICAL: Return ONLY a raw JSON object. No markdown. No backticks. No explanation. Start your response with { and end with }. The ENTIRE response must be valid JSON. No text before or after.
 {
   "executiveSummary": {
     "totalMaterialCost": 0,
