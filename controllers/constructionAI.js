@@ -246,9 +246,9 @@ const analyzeConstruction = async (req, res) => {
     const systemPrompt = buildSystemPrompt(zoyaPrices, quantities, specs);
 
     // 4. Use correct Gemini model
-    // gemini-1.5-flash-latest: fast, cost-effective, supports images
-    // gemini-1.5-flash-latest:   slower, more accurate for complex analysis
-    const modelName = imageFile ? 'gemini-1.5-flash-latest' : 'gemini-1.5-flash-latest';
+    // gemini-1.5-flash: fast, cost-effective, supports images
+    // gemini-1.5-flash:   slower, more accurate for complex analysis
+    const modelName = imageFile ? 'gemini-1.5-flash' : 'gemini-1.5-flash';
     const model     = genAI.getGenerativeModel({
       model: modelName,
       generationConfig: {
@@ -347,7 +347,7 @@ const chatConstruction = async (req, res) => {
     if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash-latest',
+      model: 'gemini-1.5-flash',
       generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
     });
 
