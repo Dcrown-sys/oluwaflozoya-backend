@@ -253,7 +253,7 @@ const analyzeConstruction = async (req, res) => {
         temperature:      0.2,   // LOW = factual, not creative
         topP:             0.8,
         topK:             40,
-        maxOutputTokens:  8192,
+        maxOutputTokens:  16384,
         responseMimeType: 'application/json', // FORCE pure JSON — no markdown backticks
       },
     });
@@ -283,7 +283,12 @@ const analyzeConstruction = async (req, res) => {
     const rawResponse = result.response.text();
 
     // 7. Parse structured output
-    const parsed  = parseGeminiResponse(rawResponse);
+    let parsed = parseGeminiResponse(rawResponse);
+    // If parse failed, try to extract partial JSON
+    if (!parsed) {
+      const partial = rawResponse.match(/"executiveSummary"[\s\S]*?"grandTotal":\s*(\d+)/);
+      if (partial) console.log('⚠️ Partial JSON detected — response truncated');
+    }
     const report  = formatReport(parsed, quantities, specs);
 
     // 8. Respond
