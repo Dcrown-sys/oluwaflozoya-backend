@@ -292,7 +292,7 @@ const getZoyaConstructionPrices = async (projectType = 'building') => {
         unit,
         producer,
         description,
-        type,
+        type
       FROM products
       WHERE (
         LOWER(name)        LIKE '%cement%'    OR
