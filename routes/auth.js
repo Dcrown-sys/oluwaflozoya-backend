@@ -350,4 +350,127 @@ router.post("/refresh", async (req, res) => {
   }
 });
 
+// POST /api/auth/register
+router.post("/register", async (req, res) => {
+  try {
+    const {
+      full_name,
+      email,
+      phone,
+      password,
+      address = null,
+      referral_username = null,
+    } = req.body;
+
+    if (!full_name || !email || !phone || !password) {
+      return res.status(400).json({
+        success: false,
+        error: "Full name, email, phone and password are required",
+      });
+    }
+
+    const [existingUser] = await sql`
+      SELECT id
+      FROM users
+      WHERE LOWER(email) = LOWER(${email})
+      LIMIT 1
+    `;
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        error: "This email already has a Zoya account. Please login instead.",
+      });
+    }
+
+    let referredByUserId = null;
+
+    const defaultReferralUsername = "ZOYA-VICTORER5137";
+    const finalReferralUsername = referral_username || defaultReferralUsername;
+
+    if (finalReferralUsername) {
+      const [referrer] = await sql`
+        SELECT id
+        FROM users
+        WHERE username = ${finalReferralUsername}
+        LIMIT 1
+      `;
+
+      if (!referrer && referral_username) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid referral username",
+        });
+      }
+
+      if (referrer) {
+        referredByUserId = referrer.id;
+      }
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const [newUser] = await sql`
+      INSERT INTO users (
+        email,
+        phone,
+        full_name,
+        password,
+        role,
+        status,
+        address,
+        referred_by_user_id,
+        created_at
+      )
+      VALUES (
+        ${email},
+        ${phone},
+        ${full_name},
+        ${hashedPassword},
+        'buyer',
+        'active',
+        ${address},
+        ${referredByUserId},
+        NOW()
+      )
+      RETURNING *
+    `;
+
+    if (referredByUserId) {
+      await sql`
+        INSERT INTO engineer_referrals (
+          referrer_user_id,
+          referred_user_id,
+          status,
+          created_at
+        )
+        VALUES (
+          ${referredByUserId},
+          ${newUser.id},
+          'pending',
+          NOW()
+        )
+        ON CONFLICT DO NOTHING
+      `;
+    }
+
+    const token = generateToken(newUser);
+
+    return res.status(201).json({
+      success: true,
+      message: "Account created successfully",
+      user: buildUserResponse(newUser),
+      token,
+    });
+  } catch (error) {
+    console.error("Register error:", error);
+
+    return res.status(500).json({
+      success: false,
+      error: "Server error",
+      details: error.message,
+    });
+  }
+});
+
 module.exports = router;
