@@ -8,72 +8,59 @@ const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 // ── Nigerian construction constants ─────────────────────────
 const NIGERIAN_STANDARDS = {
-  concreteRatio:     '1:2:4 (Grade 20)',   // standard Nigerian mix
-  blockSize:         '225x450mm (9-inch)', // standard Nigerian block
-  cementBagsPerM3:   7.5,                  // bags per m³ concrete
-  labourPercent:     0.35,                 // labour = 35% of materials
+  concreteRatio:     '1:2:4 (Grade 20)',
+  blockSize:         '225x450mm (9-inch)',
+  cementBagsPerM3:   7.5,
+  labourPercent:     0.35,
   wasteFactors: {
-    blocks:   0.05,  // 5% waste
-    tiles:    0.10,  // 10% waste
-    cement:   0.08,  // 8% waste
-    steel:    0.05,  // 5% waste
-    timber:   0.12,  // 12% waste
+    blocks:   0.05,
+    tiles:    0.10,
+    cement:   0.08,
+    steel:    0.05,
+    timber:   0.12,
   },
   regionMultipliers: {
-    Lagos:   1.20,
-    Abuja:   1.15,
+    Lagos:        1.20,
+    Abuja:        1.15,
     PortHarcourt: 1.10,
-    Kano:    0.90,
-    Ibadan:  0.95,
-    default: 1.00,
+    Kano:         0.90,
+    Ibadan:       0.95,
+    default:      1.00,
   },
 };
 
 // ── Derive key quantities from plot dimensions ───────────────
 function computeBaseQuantities({ projectType, houseType, plotLength, plotWidth, floors }) {
-  const plotArea    = plotLength * plotWidth;
-  // In Nigeria, built-up area is typically 60-70% of plot
-  const builtArea   = projectType === 'building' ? plotArea * 0.65 : plotArea;
-  const floorArea   = builtArea * floors;
-  const perimeter   = 2 * (plotLength + plotWidth);
-  const wallHeight  = 3.0; // metres per floor (standard Nigeria)
-  const wallArea    = perimeter * wallHeight * floors;
-  // Foundation trench: 600mm wide × 900mm deep typical
-  const foundationM3 = perimeter * 0.6 * 0.9;
-
-  // Concrete slabs: 150mm thick
-  const slabM3     = floorArea * 0.15;
-  // Columns: approx 1 per 16m² floor area, 300×300mm
-  const columns    = Math.ceil(floorArea / 16);
-  const columnM3   = columns * 0.3 * 0.3 * wallHeight * floors;
-
-  // Blocks: 1 block covers ~0.1m² wall area (with mortar)
-  const blocksNeeded = Math.ceil((wallArea / 0.1) * (1 + NIGERIAN_STANDARDS.wasteFactors.blocks));
-
-  // Cement bags
+  const plotArea      = plotLength * plotWidth;
+  const builtArea     = projectType === 'building' ? plotArea * 0.65 : plotArea;
+  const floorArea     = builtArea * floors;
+  const perimeter     = 2 * (plotLength + plotWidth);
+  const wallHeight    = 3.0;
+  const wallArea      = perimeter * wallHeight * floors;
+  const foundationM3  = perimeter * 0.6 * 0.9;
+  const slabM3        = floorArea * 0.15;
+  const columns       = Math.ceil(floorArea / 16);
+  const columnM3      = columns * 0.3 * 0.3 * wallHeight * floors;
+  const blocksNeeded  = Math.ceil((wallArea / 0.1) * (1 + NIGERIAN_STANDARDS.wasteFactors.blocks));
   const totalConcreteM3 = foundationM3 + slabM3 + columnM3;
-  const cementBags = Math.ceil(totalConcreteM3 * NIGERIAN_STANDARDS.cementBagsPerM3 * (1 + NIGERIAN_STANDARDS.wasteFactors.cement));
-
-  // Roofing (only top floor)
-  const roofingArea = builtArea * 1.3; // 30% overhang factor
-  const trusses     = Math.ceil(builtArea / 1.2); // truss every 1.2m
-
-  // Rebar: approx 80kg per m³ concrete (Nigerian standard)
-  const rebarKg = Math.ceil(totalConcreteM3 * 80 * (1 + NIGERIAN_STANDARDS.wasteFactors.steel));
+  const cementBags    = Math.ceil(totalConcreteM3 * NIGERIAN_STANDARDS.cementBagsPerM3 * (1 + NIGERIAN_STANDARDS.wasteFactors.cement));
+  const roofingArea   = builtArea * 1.3;
+  const trusses       = Math.ceil(builtArea / 1.2);
+  const rebarKg       = Math.ceil(totalConcreteM3 * 80 * (1 + NIGERIAN_STANDARDS.wasteFactors.steel));
 
   return {
-    plotArea:       Math.round(plotArea),
-    builtArea:      Math.round(builtArea),
-    floorArea:      Math.round(floorArea),
-    perimeter:      Math.round(perimeter),
-    wallArea:       Math.round(wallArea),
-    foundationM3:   Math.round(foundationM3 * 10) / 10,
-    slabM3:         Math.round(slabM3 * 10) / 10,
-    columnM3:       Math.round(columnM3 * 10) / 10,
-    totalConcreteM3:Math.round(totalConcreteM3 * 10) / 10,
+    plotArea:        Math.round(plotArea),
+    builtArea:       Math.round(builtArea),
+    floorArea:       Math.round(floorArea),
+    perimeter:       Math.round(perimeter),
+    wallArea:        Math.round(wallArea),
+    foundationM3:    Math.round(foundationM3 * 10) / 10,
+    slabM3:          Math.round(slabM3 * 10) / 10,
+    columnM3:        Math.round(columnM3 * 10) / 10,
+    totalConcreteM3: Math.round(totalConcreteM3 * 10) / 10,
     blocksNeeded,
     cementBags,
-    roofingArea:    Math.round(roofingArea),
+    roofingArea:     Math.round(roofingArea),
     trusses,
     rebarKg,
     columns,
@@ -82,68 +69,29 @@ function computeBaseQuantities({ projectType, houseType, plotLength, plotWidth, 
   };
 }
 
-// ── Build a tight, accurate system prompt ────────────────────
-function buildSystemPrompt(zoyaPrices, quantities, specs) {
-  const { projectType, houseType, plotLength, plotWidth, floors, phase, specialReqs, region } = specs;
-  const regionMult = NIGERIAN_STANDARDS.regionMultipliers[region] || NIGERIAN_STANDARDS.regionMultipliers.default;
-
-  return `You are Zoya AI, a professional Quantity Surveyor (QS) with 20 years experience in Nigerian construction.
-You specialise in accurate cost estimation using current Nigerian market prices.
-
-=== STRICT RULES FOR ACCURACY ===
-1. ALWAYS use the Zoya live prices provided below. Never guess prices.
-2. Apply Nigerian standard building codes and practices.
-3. Include all waste factors: blocks +5%, tiles +10%, cement +8%, steel +5%, timber +12%.
-4. Labour cost = 35% of total material cost (Nigerian market rate).
-5. Apply regional price multiplier of ${regionMult}x for ${region || 'this region'}.
-6. Round ALL quantities UP to nearest whole unit (never underestimate).
-7. State assumptions clearly. If data is missing, ask ONE specific question.
-8. Give costs in Naira (₦). Format large numbers with commas (e.g. ₦2,500,000).
-9. Never fabricate quantities — use the pre-computed base quantities provided.
-
-=== PROJECT SPECIFICATIONS ===
-Type: ${projectType.toUpperCase()}
-${projectType === 'building' ? `Building: ${houseType} | Plot: ${plotLength}m × ${plotWidth}m | Floors: ${floors}` : `Dimensions: ${plotLength}m × ${plotWidth}m`}
-Phase: ${phase}
-Special Requirements: ${specialReqs || 'None stated'}
-Region: ${region || 'Nigeria (national average)'}
-
-=== PRE-COMPUTED BASE QUANTITIES (use these, do not recalculate) ===
-${JSON.stringify(quantities, null, 2)}
-
-Nigerian Standards Applied:
-- Concrete mix: ${NIGERIAN_STANDARDS.concreteRatio}
-- Block size: ${NIGERIAN_STANDARDS.blockSize}
-- Cement: ${NIGERIAN_STANDARDS.cementBagsPerM3} bags per m³ concrete
-- Labour: ${NIGERIAN_STANDARDS.labourPercent * 100}% of material cost
-
-=== ZOYA LIVE MATERIAL PRICES ===
-${JSON.stringify(zoyaPrices, null, 2)}
-
-=== OUTPUT FORMAT ===
-Return a JSON object with this EXACT structure (no markdown, pure JSON):
+// ── Shared JSON output schema (used in all prompts) ──────────
+const JSON_OUTPUT_SCHEMA = `
+Return ONLY a valid JSON object with this EXACT structure. No markdown. No explanation. No text before or after.
 {
   "executiveSummary": {
-    "totalMaterialCost": 0, // MUST be a plain integer, NO ₦ symbol, NO commas. Example: 25000000
-    "totalLabourCost": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
-    "grandTotal": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
-    "durationWeeks": null,
-    "costPerM2": 0, // MUST be a plain integer, NO ₦ symbol, NO commas
+    "totalMaterialCost": 0,
+    "totalLabourCost": 0,
+    "grandTotal": 0,
+    "durationWeeks": 0,
+    "costPerM2": 0,
     "confidence": "high|medium|low",
-    "assumptions": [] // Maximum 5 assumptions, each under 100 characters
+    "assumptions": []
   },
   "phases": {
     "foundation": {
-      "items": [
-        { "description": "", "quantity": 0, "unit": "", "unitPrice": 0, "total": 0 }
-      ],
-      "subtotal": null
+      "items": [{ "description": "", "quantity": 0, "unit": "", "unitPrice": 0, "total": 0 }],
+      "subtotal": 0
     },
-    "structure": { "items": [], "subtotal": null },
-    "roofing": { "items": [], "subtotal": null },
-    "finishing": { "items": [], "subtotal": null },
-    "electrical": { "items": [], "subtotal": null },
-    "plumbing": { "items": [], "subtotal": null }
+    "structure":  { "items": [], "subtotal": 0 },
+    "roofing":    { "items": [], "subtotal": 0 },
+    "finishing":  { "items": [], "subtotal": 0 },
+    "electrical": { "items": [], "subtotal": 0 },
+    "plumbing":   { "items": [], "subtotal": 0 }
   },
   "topMaterials": [
     { "name": "", "quantity": 0, "unit": "", "cost": 0, "percentOfTotal": 0 }
@@ -151,20 +99,95 @@ Return a JSON object with this EXACT structure (no markdown, pure JSON):
   "recommendations": [],
   "clarifyingQuestions": [],
   "warnings": []
-}`;
+}
+
+CRITICAL RULES FOR ALL NUMBERS:
+- Every cost field (unitPrice, total, subtotal, totalMaterialCost, etc.) MUST be a plain integer — no ₦ symbol, no commas, no quotes.
+- Example correct: "grandTotal": 36500000
+- Example WRONG:   "grandTotal": "₦36,500,000"`;
+
+// ── Build system prompt (text path) ─────────────────────────
+function buildSystemPrompt(zoyaPrices, quantities, specs) {
+  const { projectType, houseType, plotLength, plotWidth, floors, phase, specialReqs, region } = specs;
+  const regionMult = NIGERIAN_STANDARDS.regionMultipliers[region] || NIGERIAN_STANDARDS.regionMultipliers.default;
+
+  return `You are Zoya AI, a professional Quantity Surveyor (QS) with 20 years experience in Nigerian construction.
+
+=== STRICT RULES ===
+1. Use ONLY the Zoya live prices below. Never invent prices.
+2. Apply waste factors: blocks +5%, tiles +10%, cement +8%, steel +5%, timber +12%.
+3. Labour = 35% of total material cost.
+4. Apply regional multiplier of ${regionMult}x for ${region || 'Nigeria'}.
+5. Round ALL quantities UP to nearest whole unit.
+6. Costs in plain integers only — no ₦ symbol, no commas in JSON fields.
+
+=== PROJECT SPECIFICATIONS ===
+Type: ${projectType.toUpperCase()}
+${projectType === 'building' ? `Building: ${houseType} | Plot: ${plotLength}m × ${plotWidth}m | Floors: ${floors}` : `Dimensions: ${plotLength}m × ${plotWidth}m`}
+Phase: ${phase}
+Special Requirements: ${specialReqs || 'None'}
+Region: ${region || 'Nigeria'}
+
+=== PRE-COMPUTED BASE QUANTITIES (do NOT recalculate these) ===
+${JSON.stringify(quantities, null, 2)}
+
+Nigerian Standards:
+- Concrete mix: ${NIGERIAN_STANDARDS.concreteRatio}
+- Block size: ${NIGERIAN_STANDARDS.blockSize}
+- Cement: ${NIGERIAN_STANDARDS.cementBagsPerM3} bags/m³
+- Labour: ${NIGERIAN_STANDARDS.labourPercent * 100}% of material cost
+
+=== ZOYA LIVE MATERIAL PRICES ===
+${JSON.stringify(zoyaPrices, null, 2)}
+
+${JSON_OUTPUT_SCHEMA}`;
+}
+
+// ── Build image prompt (SAME structured output required) ─────
+function buildImagePrompt(zoyaPrices, quantities, specs) {
+  const { projectType, houseType, plotLength, plotWidth, floors, phase, specialReqs, region } = specs;
+  const regionMult = NIGERIAN_STANDARDS.regionMultipliers[region] || NIGERIAN_STANDARDS.regionMultipliers.default;
+
+  return `You are Zoya AI, a professional Nigerian Quantity Surveyor analyzing a construction site image.
+
+=== YOUR TASK ===
+1. Analyze the image to identify: building style, visible materials, site conditions, construction stage, and any quality indicators.
+2. Use your image observations TOGETHER with the project specs and pre-computed quantities to produce a FULLY STRUCTURED cost estimate.
+3. If the image shows a different building type or scale than the specs, note it as an assumption and proceed with the specs.
+4. You MUST still return the complete structured JSON below — the image gives you context, not an excuse to skip structure.
+
+=== STRICT RULES ===
+1. Use ONLY the Zoya live prices below. Never invent prices.
+2. Apply waste factors: blocks +5%, tiles +10%, cement +8%, steel +5%, timber +12%.
+3. Labour = 35% of total material cost.
+4. Apply regional multiplier of ${regionMult}x for ${region || 'Nigeria'}.
+5. Round ALL quantities UP to nearest whole unit.
+6. Costs in plain integers only — no ₦ symbol, no commas in JSON fields.
+
+=== PROJECT SPECIFICATIONS ===
+Type: ${projectType.toUpperCase()}
+${projectType === 'building' ? `Building: ${houseType} | Plot: ${plotLength}m × ${plotWidth}m | Floors: ${floors}` : `Dimensions: ${plotLength}m × ${plotWidth}m`}
+Phase: ${phase}
+Special Requirements: ${specialReqs || 'None'}
+Region: ${region || 'Nigeria'}
+
+=== PRE-COMPUTED BASE QUANTITIES (use these, do NOT recalculate) ===
+${JSON.stringify(quantities, null, 2)}
+
+=== ZOYA LIVE MATERIAL PRICES ===
+${JSON.stringify(zoyaPrices, null, 2)}
+
+${JSON_OUTPUT_SCHEMA}`;
 }
 
 // ── Parse structured JSON from Gemini response ───────────────
 function parseGeminiResponse(rawText) {
   if (!rawText) return null;
-  // Try 1: direct parse (works when responseMimeType=application/json)
   try { return JSON.parse(rawText.trim()); } catch {}
-  // Try 2: strip markdown fences
   try {
-    const clean = rawText.replace(/```json\n?/g,'').replace(/```\n?/g,'').trim();
+    const clean = rawText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     return JSON.parse(clean);
   } catch {}
-  // Try 3: extract first { ... } block
   try {
     const match = rawText.match(/\{[\s\S]*\}/);
     if (match) return JSON.parse(match[0]);
@@ -172,13 +195,12 @@ function parseGeminiResponse(rawText) {
   return null;
 }
 
-// ── Format parsed data into human-readable report ────────────
+// ── Format parsed data into report ──────────────────────────
 function formatReport(parsed, quantities, specs) {
   if (!parsed) return null;
   const { executiveSummary, phases, topMaterials, recommendations, clarifyingQuestions, warnings } = parsed;
   const fmtN = n => `₦${Number(n || 0).toLocaleString('en-NG')}`;
 
-  // Auto-calculate totals from phase subtotals if AI returned zeros
   const phaseSubtotals = Object.values(phases || {})
     .map(p => Number(p?.subtotal || 0)).reduce((a, b) => a + b, 0);
   const itemTotals = Object.values(phases || {})
@@ -191,7 +213,14 @@ function formatReport(parsed, quantities, specs) {
   const costPerM2     = Number(executiveSummary?.costPerM2 || 0)         || (quantities.builtArea > 0 ? Math.round(grandTotal / quantities.builtArea) : 0);
   const durationWeeks = Number(executiveSummary?.durationWeeks || 0)     || Math.max(12, Math.round(Math.sqrt(grandTotal / 500000)));
 
-  const patchedSummary = { ...executiveSummary, totalMaterialCost: materialCost, totalLabourCost: labourCost, grandTotal, costPerM2, durationWeeks };
+  const patchedSummary = {
+    ...executiveSummary,
+    totalMaterialCost: materialCost,
+    totalLabourCost:   labourCost,
+    grandTotal,
+    costPerM2,
+    durationWeeks,
+  };
 
   const phaseText = Object.entries(phases || {}).map(([phaseName, data]) => {
     if (!data?.items?.length) return null;
@@ -217,44 +246,93 @@ function formatReport(parsed, quantities, specs) {
   };
 }
 
+// ── Build structured error report when JSON parse fails ──────
+// Instead of returning raw text, we return a minimal valid structure
+// so the frontend always gets consistent data to render.
+function buildFallbackReport(rawText, quantities, specs) {
+  const fmtN = n => `₦${Number(n || 0).toLocaleString('en-NG')}`;
+  console.warn('⚠️ JSON parse failed — building fallback structured report');
+
+  // Try to extract a grand total from the raw text using regex
+  const totalMatch = rawText.match(/grand\s*total[^\d]*?([\d,]+)/i);
+  const grandTotal = totalMatch ? parseInt(totalMatch[1].replace(/,/g, ''), 10) : 0;
+  const materialCost  = Math.round(grandTotal / 1.35);
+  const labourCost    = grandTotal - materialCost;
+  const costPerM2     = quantities.builtArea > 0 ? Math.round(grandTotal / quantities.builtArea) : 0;
+
+  return {
+    summary: `📊 ZOYA QS REPORT — ${specs.projectType.toUpperCase()}\nPlot: ${specs.plotLength}m × ${specs.plotWidth}m\n${grandTotal > 0 ? `GRAND TOTAL: ${fmtN(grandTotal)}` : 'Could not extract totals — see analysis below'}`,
+    phaseBreakdown:  rawText, // show raw text as fallback in the UI
+    topMaterials:    '',
+    recommendations: '• Re-run the analysis for a fully structured report.',
+    questions:       [],
+    warnings:        '⚠️ Structured parsing failed. Raw AI response shown above.',
+    assumptions:     '',
+    raw: {
+      executiveSummary: {
+        totalMaterialCost: materialCost,
+        totalLabourCost:   labourCost,
+        grandTotal,
+        costPerM2,
+        durationWeeks:     0,
+        confidence:        'low',
+        assumptions:       ['Structured parsing failed — figures extracted from raw text.'],
+      },
+      phases:       {},
+      topMaterials: [],
+    },
+  };
+}
+
 // ── Main controller ──────────────────────────────────────────
 const analyzeConstruction = async (req, res) => {
   try {
     const {
-      projectType  = 'building',
-      houseType    = 'duplex',
-      plotLength   = 15,
-      plotWidth    = 20,
-      floors       = 1,
-      phase        = 'complete',
-      specialReqs  = '',
-      region       = '',
-      measureLand  = false,
+      projectType = 'building',
+      houseType   = 'duplex',
+      plotLength  = 15,
+      plotWidth   = 20,
+      floors      = 1,
+      phase       = 'complete',
+      specialReqs = '',
+      region      = '',
+      measureLand = false,
     } = req.body;
 
-    const imageFile  = req.file;
-    const specs      = { projectType, houseType, plotLength: Number(plotLength), plotWidth: Number(plotWidth), floors: Number(floors), phase, specialReqs, region };
+    const imageFile = req.file;
+    const specs     = {
+      projectType,
+      houseType,
+      plotLength:  Number(plotLength),
+      plotWidth:   Number(plotWidth),
+      floors:      Number(floors),
+      phase,
+      specialReqs,
+      region,
+    };
 
-    // 1. Get live prices
+    // 1. Live prices
     const zoyaPrices = await getZoyaConstructionPrices(projectType);
 
-    // 2. Pre-compute quantities (reduces hallucination)
+    // 2. Pre-compute quantities
     const quantities = computeBaseQuantities(specs);
 
-    // 3. Build prompt
-    const systemPrompt = buildSystemPrompt(zoyaPrices, quantities, specs);
+    // 3. Build the right prompt depending on whether image is present
+    //    Both paths use the SAME JSON output schema — no more unstructured fallback
+    const systemPrompt = imageFile
+      ? buildImagePrompt(zoyaPrices, quantities, specs)
+      : buildSystemPrompt(zoyaPrices, quantities, specs);
 
-    // 4. Use correct Gemini model
-    // gemini-2.5-flash: latest, fast, supports images and JSON mode
+    // 4. Model — gemini-2.5-flash supports both image + JSON mode
     const modelName = 'gemini-2.5-flash';
     const model     = genAI.getGenerativeModel({
       model: modelName,
       generationConfig: {
-        temperature:      0.2,   // LOW = factual, not creative
+        temperature:      0.2,
         topP:             0.8,
         topK:             40,
         maxOutputTokens:  16384,
-        responseMimeType: 'application/json', // FORCE pure JSON — no markdown backticks
+        responseMimeType: 'application/json', // force pure JSON on BOTH paths
       },
     });
 
@@ -269,10 +347,11 @@ const analyzeConstruction = async (req, res) => {
           mimeType: imageFile.mimetype,
         },
       });
+      // Image instruction — just context, NOT a replacement for structure
       parts.push({
         text: measureLand
-          ? '\nAnalyze this image. Extract any visible dimensions, measurements, or scale references. Use them to refine the quantity estimates above.'
-          : '\nAnalyze this image for material conditions, site constraints, or quality indicators that affect the cost estimate.',
+          ? 'Analyze this image for visible dimensions, measurements, or scale references. Use them to refine quantities. Still return the full structured JSON.'
+          : 'Analyze this image for building style, site conditions, material quality, and construction stage. Factor observations into your estimate. Still return the full structured JSON.',
       });
       // Clean up temp file
       fs.unlink(imageFile.path, () => {});
@@ -282,53 +361,46 @@ const analyzeConstruction = async (req, res) => {
     const result      = await model.generateContent(parts);
     const rawResponse = result.response.text();
 
-    // 7. Parse structured output
-    let parsed = parseGeminiResponse(rawResponse);
-    // If parse failed, try to extract partial JSON
-    if (!parsed) {
-      const partial = rawResponse.match(/"executiveSummary"[\s\S]*?"grandTotal":\s*(\d+)/);
-      if (partial) console.log('⚠️ Partial JSON detected — response truncated');
-    }
-    const report  = formatReport(parsed, quantities, specs);
+    console.log(`📡 Gemini raw response length: ${rawResponse.length} chars`);
 
-    // 8. Respond
+    // 7. Parse — same parser for both text and image paths
+    const parsed = parseGeminiResponse(rawResponse);
+
+    // 8. Format — if parse succeeded use full report, else build structured fallback
+    //    NEVER return raw unstructured text as phaseBreakdown
+    const report = parsed
+      ? formatReport(parsed, quantities, specs)
+      : buildFallbackReport(rawResponse, quantities, specs);
+
+    // 9. Respond — same shape regardless of image or text path
     res.json({
       success: true,
-      report: report
-        ? {
-            summary:         report.summary,
-            phaseBreakdown:  report.phaseBreakdown,
-            topMaterials:    report.topMaterials,
-            recommendations: report.recommendations,
-            warnings:        report.warnings,
-            assumptions:     report.assumptions,
-            questions:       report.questions,
-            structured:      report.raw,       // full structured data for frontend charts
-          }
-        : {
-            // Fallback if JSON parse fails — return raw text
-            summary:        '📊 Analysis complete (unstructured)',
-            phaseBreakdown: rawResponse,
-            questions:      [],
-          },
-      quantities,   // pre-computed quantities always returned
+      report: {
+        summary:         report.summary,
+        phaseBreakdown:  report.phaseBreakdown,
+        topMaterials:    report.topMaterials,
+        recommendations: report.recommendations,
+        warnings:        report.warnings,
+        assumptions:     report.assumptions,
+        questions:       report.questions,
+        structured:      report.raw,
+      },
+      quantities,
       specs,
       meta: {
         modelUsed:     modelName,
         imageAnalyzed: !!imageFile,
         landMeasured:  measureLand && !!imageFile,
         pricesUsed:    true,
+        parsedCleanly: !!parsed,   // tells frontend if JSON came back clean
         region:        region || 'National average',
       },
     });
 
   } catch (error) {
     console.error('Construction AI error:', error);
-
-    // Friendly error with actionable info
     const isQuotaError = error.message?.includes('quota') || error.message?.includes('429');
     const isModelError = error.message?.includes('model') || error.message?.includes('404');
-
     res.status(500).json({
       success: false,
       error: isQuotaError
@@ -341,13 +413,10 @@ const analyzeConstruction = async (req, res) => {
   }
 };
 
-// ── Follow-up chat for iterative refinement ──────────────────
-// Allows the user to ask follow-up questions about their estimate
+// ── Follow-up chat ───────────────────────────────────────────
 const chatConstruction = async (req, res) => {
   try {
     const { message, context } = req.body;
-    // context = previously returned specs + structured report
-
     if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
 
     const model = genAI.getGenerativeModel({
@@ -363,14 +432,11 @@ const chatConstruction = async (req, res) => {
 ${contextStr}
 User question: ${message}
 
-Answer concisely and accurately. If the question requires recalculating quantities, show your working.
+Answer concisely and accurately. Show workings if recalculating quantities.
 Use Nigerian market prices and standards. Format costs in ₦.`;
 
     const result = await model.generateContent([{ text: prompt }]);
-    res.json({
-      success:  true,
-      response: result.response.text(),
-    });
+    res.json({ success: true, response: result.response.text() });
   } catch (error) {
     console.error('Chat error:', error);
     res.status(500).json({ success: false, error: 'Chat temporarily unavailable.' });
