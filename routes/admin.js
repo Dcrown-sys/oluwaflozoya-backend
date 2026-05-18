@@ -275,4 +275,6 @@ router.get(
   adminController.getFlaggedUsers
 );
 
+router.get("/users", verifyAdmin, adminController.getAdminUsers);
+
 module.exports = router;

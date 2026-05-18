@@ -4652,3 +4652,42 @@ exports.getFlaggedUsers = async (req, res) => {
     });
   }
 };
+
+
+exports.getAdminUsers = async (req, res) => {
+  try {
+    const search = req.query.search || "";
+
+    const users = await sql`
+      SELECT
+        id,
+        full_name,
+        email,
+        phone,
+        role,
+        username,
+        is_flagged,
+        flag_reason
+      FROM users
+      WHERE
+        LOWER(full_name) LIKE LOWER(${"%" + search + "%"})
+        OR LOWER(email) LIKE LOWER(${"%" + search + "%"})
+        OR LOWER(username) LIKE LOWER(${"%" + search + "%"})
+        OR phone LIKE ${"%" + search + "%"}
+      ORDER BY created_at DESC
+      LIMIT 100
+    `;
+
+    return res.json({
+      success: true,
+      users,
+    });
+  } catch (error) {
+    console.error("getAdminUsers error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch users",
+      details: error.message,
+    });
+  }
+};

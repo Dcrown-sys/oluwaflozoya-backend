@@ -80,6 +80,7 @@ app.use("/api/engineer", engineerRoutes);
 app.use('/admin', adminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', require('./routes/adminOrdersRoutes'));
+app.use("/api/admin", adminRoutes);
 app.use("/api/couriers", courierRoutes);
 app.use("/api/delivery", deliveryRoutes);
 app.use("/api/courier-switch", courierSwitchRoutes);
