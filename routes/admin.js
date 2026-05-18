@@ -269,4 +269,10 @@ router.patch(
   adminController.flagUserAccount
 );
 
+router.get(
+  "/flagged-users",
+  verifyAdmin,
+  adminController.getFlaggedUsers
+);
+
 module.exports = router;

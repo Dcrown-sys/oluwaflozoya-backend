@@ -5,6 +5,7 @@ const admin = require("../utils/firebase-admin");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const { sql } = require("../db");
+const { verifyToken } = require("../middleware/auth");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret";
 
@@ -469,6 +470,37 @@ router.post("/register", async (req, res) => {
       success: false,
       error: "Server error",
       details: error.message,
+    });
+  }
+});
+
+router.patch("/link-firebase-uid", verifyToken, async (req, res) => {
+  try {
+    const { firebase_uid } = req.body;
+
+    if (!firebase_uid) {
+      return res.status(400).json({
+        success: false,
+        error: "firebase_uid is required",
+      });
+    }
+
+    const [user] = await sql`
+      UPDATE users
+      SET firebase_uid = ${firebase_uid}
+      WHERE id = ${req.user.id}
+      RETURNING *
+    `;
+
+    return res.json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    console.error("linkFirebaseUid error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to link Firebase UID",
     });
   }
 });

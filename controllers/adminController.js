@@ -4620,3 +4620,35 @@ exports.flagUserAccount = async (req, res) => {
     });
   }
 };
+
+
+exports.getFlaggedUsers = async (req, res) => {
+  try {
+    const users = await sql`
+      SELECT
+        id,
+        full_name,
+        email,
+        phone,
+        role,
+        username,
+        is_flagged,
+        flag_reason
+      FROM users
+      WHERE is_flagged = true
+      ORDER BY full_name ASC
+    `;
+
+    return res.json({
+      success: true,
+      users,
+    });
+  } catch (error) {
+    console.error("getFlaggedUsers error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch flagged users",
+      details: error.message,
+    });
+  }
+};
