@@ -209,19 +209,6 @@ app.get('/payment-success', (req, res) => {
 const axios = require('axios');
 const { exec } = require('child_process');
 
-let AI_READY = false;
-
-async function checkOllama() {
-  try {
-    await axios.get('http://localhost:11434/api/tags', { timeout: 5000 });
-    console.log('✅ Ollama ready');
-    return true;
-  } catch (e) {
-    console.log('⚠️ Ollama warming up...');
-    return false;
-  }
-}
-
 // ── Error handler (must be last middleware) ──
 const { errorHandler } = require('./middleware/errorHandler');
 app.use(errorHandler);
