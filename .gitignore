@@ -1,3 +1,18 @@
+# Secrets
 .env
+.env.*
+!.env.example
 serviceAccountKey.json
 firebase-service-account.json
+
+# Dependencies — reinstalled by `npm ci` during the Docker build
+node_modules/
+
+# Runtime upload scratch. Render's filesystem is ephemeral, so nothing here
+# survives a deploy; these belong in object storage, not in the repo.
+uploads/
+
+# Local tooling
+.expo/
+*.log
+.DS_Store
